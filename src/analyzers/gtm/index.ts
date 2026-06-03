@@ -68,11 +68,17 @@ async function buildGtmData(ctx: AnalyzerContext, artifacts: Artifacts, derived:
 
   return {
     basis:
-      'Container ids are detected from the network; each gtm.js is FETCHED LIVE ' +
-      'and parsed (var data → resource). Tag/variable/trigger counts reflect the ' +
-      'container CONFIG now (may differ slightly from capture time). Transfer is ' +
-      'from the captured network; CPU/blocking is the "Google Tag Manager" entity ' +
-      'from third-party-summary (config size, not per-container CPU).',
+      'Objective (directly parsed): container ids, tag/variable/predicate/rule ' +
+      'counts, tag function-type breakdown, paused/Custom-HTML/UA counts, transfer ' +
+      'bytes. HEURISTIC / not authoritative: (1) firing timing is reconstructed ' +
+      'via __e→predicates→`if` rules and does NOT model blocking/exception ' +
+      'triggers or tag sequencing, so pageview counts can be slightly over-stated; ' +
+      '(2) per-tag cost is NOT measured — Custom-HTML "heaviness" is a count, not ' +
+      'a per-tag time; (3) Custom-HTML vendor domains are text references in the ' +
+      'tag body, not confirmed network loads; (4) CPU/blocking is the "Google Tag ' +
+      'Manager" entity (gtm.js/gtag scripts only) — the cost of vendors that GTM ' +
+      'INJECTS appears under those vendors, so GTM\'s true footprint is larger and ' +
+      'distributed. gtm.js is fetched live, so config may differ from capture time.',
     containers,
     gtagIds,
     totals: {

@@ -117,13 +117,16 @@ function classifyFiring(r: GtmResource): { firing: FiringTiming; firesOnPageview
   const tagEvents = new Map<number, Set<string>>()
   for (const rule of rules) {
     if (!Array.isArray(rule)) continue
+    // Firing events come from positive `if` conditions only. `unless` is an
+    // exception (negative) condition and `block` removes tags — neither marks
+    // when a tag fires, so they must not contribute firing events.
     const preds: number[] = []
     const addTags: number[] = []
     for (const clause of rule) {
       if (!Array.isArray(clause)) continue
       const op = clause[0]
       const idxs = clause.slice(1).filter((x): x is number => typeof x === 'number')
-      if (op === 'if' || op === 'unless') preds.push(...idxs)
+      if (op === 'if') preds.push(...idxs)
       else if (op === 'add') addTags.push(...idxs)
     }
     const events = preds.map((p) => predEvent.get(p)).filter((e): e is string => Boolean(e))
