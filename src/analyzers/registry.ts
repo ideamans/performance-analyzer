@@ -1,4 +1,5 @@
 import type { Analyzer } from './Analyzer.js'
+import { gtmAnalyzer } from './gtm/index.js'
 import { lcpAnalyzer } from './lcp/index.js'
 import { thirdPartyAnalyzer } from './third-party/index.js'
 
@@ -11,6 +12,7 @@ function register(a: Analyzer): void {
 
 register(lcpAnalyzer)
 register(thirdPartyAnalyzer)
+register(gtmAnalyzer)
 
 export function getAnalyzer(name: string): Analyzer | undefined {
   return analyzers.get(name)

@@ -26,6 +26,13 @@ Lighthouse でトレースを **1回だけ取得** し、その同じ成果物�
   - 冗長性検出（アナリティクス重複・GTM コンテナ複数・GA4 計測ID 複数）
   - レンダーブロッキングな第三者、遅延読込（ファサード）候補
   - **CDN ライブラリ（jsDelivr/cdnjs/jQuery/Google CDN 等）は「置換可能」としてタグから除外**し別枠表示。**Google Fonts はタグに含める**
+- **GTM 詳細分析（`gtm`）** — 「GTM がどれだけ肥大化しているか」を反省し、どこから削るか
+  - コンテナを検出して **gtm.js を実取得（HTTP）し本文をパース**（`var data` を文字列内波括弧に強いスキャナで抽出）
+  - コンテナ数・タグ数・変数数、タグ種別内訳（GA4/カスタムHTML/広告変換/Custom Template…）
+  - **カスタムHTML タグ数**（任意JS・重い/監査困難）、**旧 Universal Analytics**（計測停止＝死蔵）、**停止中(paused)タグ**（コンテナ同梱の死蔵）
+  - **発火タイミング**別（pageview / DOM Ready / window load / interaction / custom）— 全ページ発火タグ＝常時コスト
+  - カスタムHTML が参照するベンダードメイン（例: Facebook を N 個のカスタムHTMLで注入、を特定）
+  - 転送量・CPU（third-party の「Google Tag Manager」と連携）
 
 ---
 
@@ -67,7 +74,7 @@ npm run dev -- capture <URL> --out ./runs/<ラベル>
 node dist/cli.js analyze <angle> <runDir> [--format json] [--out <dir>] [--stdout]
 ```
 
-- `<angle>`: `lcp` または `third-party`
+- `<angle>`: `lcp` / `third-party` / `gtm`
 - `--format`: 既定 `json`（カンマ区切りで複数指定可）
 - `--out`: 出力先（既定は `<runDir>`）。`--stdout` で標準出力へ
 
@@ -152,6 +159,8 @@ npm run test       # vitest
 - [x] Capture（複数 run → 中央値）
 - [x] LCP 到達分析（`lcp`）
 - [x] サードパーティタグ分析（`third-party`）
-- [ ] GTM 詳細分析（コンテナを HTTP 取得しタグ設定数・種別を解析）
+- [x] GTM 詳細分析（`gtm`、コンテナを HTTP 取得しタグ設定数・種別・発火タイミングを解析）
 - [ ] 画像分析
 - [ ] Markdown レポーター（2サイトを並べて読む用）
+
+> `gtm` は分析時に `googletagmanager.com` から gtm.js を実取得します（取得時刻が計測時と差異が出る場合あり）。オフライン/CI では取得失敗を部分結果として扱います。

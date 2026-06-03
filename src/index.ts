@@ -12,6 +12,8 @@ export { lcpAnalyzer } from './analyzers/lcp/index.js'
 export type * as LcpTypes from './analyzers/lcp/types.js'
 export { thirdPartyAnalyzer } from './analyzers/third-party/index.js'
 export type * as ThirdPartyTypes from './analyzers/third-party/types.js'
+export { gtmAnalyzer } from './analyzers/gtm/index.js'
+export type * as GtmTypes from './analyzers/gtm/types.js'
 
 export { getReporter, reporterNames } from './report/registry.js'
 export type { Reporter } from './report/Reporter.js'
