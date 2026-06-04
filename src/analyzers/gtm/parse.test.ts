@@ -61,6 +61,12 @@ describe('analyzeContainer', () => {
     expect(c.pausedTags).toBe(1)
   })
 
+  it('classifies tags MECE: firing + control + paused === total', () => {
+    // html, gaawe, ua = firing; paused = paused; no listeners here.
+    expect(c.tagClass).toEqual({ firing: 3, control: 0, paused: 1 })
+    expect(c.tagClass.firing + c.tagClass.control + c.tagClass.paused).toBe(c.tags)
+  })
+
   it('classifies firing via __e predicates and `if` rules', () => {
     expect(c.firing.pageview).toBe(2) // html + ua on gtm.js
     expect(c.firing.domReady).toBe(1) // gaawe on gtm.dom

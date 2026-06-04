@@ -33,6 +33,8 @@ export const gtmAnalyzer: Analyzer<GtmData> = {
       summary: {
         containers: data.totals.containerCount,
         tags: data.totals.tags,
+        firingTags: data.totals.tagClass.firing,
+        controlTags: data.totals.tagClass.control,
         customHtml: data.totals.customHtml,
         legacyUa: data.totals.legacyUa,
         pausedTags: data.totals.pausedTags,
@@ -96,6 +98,11 @@ async function buildGtmData(ctx: AnalyzerContext, artifacts: Artifacts, derived:
       customHtml: sum(parsed, (c) => c.customHtml),
       legacyUa: sum(parsed, (c) => c.legacyUa),
       pausedTags: sum(parsed, (c) => c.pausedTags),
+      tagClass: {
+        firing: sum(parsed, (c) => c.tagClass.firing),
+        control: sum(parsed, (c) => c.tagClass.control),
+        paused: sum(parsed, (c) => c.tagClass.paused),
+      },
       variables: sum(parsed, (c) => c.variables),
       rules: sum(parsed, (c) => c.rules),
       firesOnPageview: sum(parsed, (c) => c.firesOnPageview),
@@ -130,6 +137,7 @@ async function fetchAndAnalyze(
     customHtml: 0,
     legacyUa: 0,
     pausedTags: 0,
+    tagClass: { firing: 0, control: 0, paused: 0 },
     tagsByType: [],
     tagsByVendor: [],
     firing: { pageview: 0, domReady: 0, windowLoad: 0, interaction: 0, custom: 0, unknown: 0 },
@@ -232,6 +240,15 @@ function buildFindings(data: GtmData): Finding[] {
       `GTM コンテナ ${t.containerCount}個 (解析成功 ${t.parsedContainers})、タグ計 ${t.tags} / 変数 ${t.variables}。` +
       `転送 ${kb(t.transferBytes)}KB / GTM配信スクリプトCPU ${round(t.cpuMs)}ms (実負荷の詳細は third-party 分析へ)`,
     evidence: { containers: data.containers.map((c) => c.id), tags: t.tags },
+  })
+
+  // MECE split of every tag: actual firing tags vs control/listener vs paused.
+  findings.push({
+    severity: 'info',
+    message:
+      `タグ内訳(MECE): 発火 ${t.tagClass.firing} / 制御(リスナー) ${t.tagClass.control} / ` +
+      `停止中 ${t.tagClass.paused} = 計 ${t.tags}`,
+    evidence: { tagClass: t.tagClass },
   })
 
   // The headline answer: which vendors the tags are FOR.

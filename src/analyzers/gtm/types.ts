@@ -14,6 +14,20 @@ export interface KeyCount {
 }
 
 /**
+ * MECE classification of every tag (each tag is exactly one):
+ *  - firing:  actual tags that do work (measurement, pixels, ads, custom HTML…)
+ *  - control: auto-event listeners / zone — infrastructure that sets up triggers
+ *             but sends no data itself
+ *  - paused:  paused in the GTM UI but still shipped in the container (dead weight)
+ * firing + control + paused === total tags.
+ */
+export interface TagClass {
+  firing: number
+  control: number
+  paused: number
+}
+
+/**
  * How many tags fire at each lifecycle moment, derived objectively from each
  * tag's positive (`if`) firing triggers. (Blocking/exception triggers are not
  * modeled, so these are trigger-config counts, not guaranteed runtime fires.)
@@ -44,6 +58,8 @@ export interface GtmContainer {
   customHtml: number
   legacyUa: number
   pausedTags: number
+  /** MECE split: firing / control(listener) / paused. */
+  tagClass: TagClass
   tagsByType: TagTypeCount[]
   /** Tags attributed to a third-party vendor (by config domain / template type). */
   tagsByVendor: KeyCount[]
@@ -71,6 +87,8 @@ export interface GtmData {
     customHtml: number
     legacyUa: number
     pausedTags: number
+    /** MECE split aggregated across containers. */
+    tagClass: TagClass
     variables: number
     rules: number
     firesOnPageview: number

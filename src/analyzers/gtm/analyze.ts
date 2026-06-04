@@ -1,7 +1,7 @@
 import thirdPartyWeb from 'third-party-web'
 
 import type { GtmResource } from './parse.js'
-import type { FiringTiming, KeyCount, TagTypeCount } from './types.js'
+import type { FiringTiming, KeyCount, TagClass, TagTypeCount } from './types.js'
 
 const { getEntity } = thirdPartyWeb
 
@@ -46,6 +46,30 @@ const FUNCTION_VENDOR: Record<string, string> = {
   __bzi: 'LinkedIn',
 }
 
+/**
+ * Control / infrastructure tags: auto-event listeners and zone. They set up
+ * triggers (listen for clicks/scrolls/etc.) but send no data themselves.
+ */
+const CONTROL_FUNCTIONS = new Set([
+  '__cl',
+  '__lcl',
+  '__fsl',
+  '__evl',
+  '__jel',
+  '__tl',
+  '__sdl',
+  '__ytl',
+  '__hl',
+  '__zone',
+])
+
+/** MECE class of a tag: paused > control(listener) > firing. */
+function tagClassOf(fn: string | undefined): keyof TagClass {
+  if (fn === '__paused') return 'paused'
+  if (fn && CONTROL_FUNCTIONS.has(fn)) return 'control'
+  return 'firing'
+}
+
 const INTERACTION_EVENTS = new Set([
   'gtm.click',
   'gtm.linkClick',
@@ -66,6 +90,7 @@ export interface ContainerAnalysis {
   customHtml: number
   legacyUa: number
   pausedTags: number
+  tagClass: TagClass
   tagsByType: TagTypeCount[]
   tagsByVendor: KeyCount[]
   firing: FiringTiming
@@ -91,12 +116,14 @@ export function analyzeContainer(resource: GtmResource): ContainerAnalysis {
   let customHtml = 0
   let legacyUa = 0
   let pausedTags = 0
+  const tagClass: TagClass = { firing: 0, control: 0, paused: 0 }
 
   for (const t of tags) {
     const { label, deprecated } = labelFor(t.function)
     if (t.function === '__html') customHtml++
     if (t.function === '__paused') pausedTags++
     if (deprecated) legacyUa++
+    tagClass[tagClassOf(t.function)]++
 
     let row = byLabel.get(label)
     if (!row) {
@@ -121,6 +148,7 @@ export function analyzeContainer(resource: GtmResource): ContainerAnalysis {
     customHtml,
     legacyUa,
     pausedTags,
+    tagClass,
     tagsByType: [...byLabel.values()].sort((a, b) => b.count - a.count),
     tagsByVendor: toKeyCounts(byVendor),
     firing,
