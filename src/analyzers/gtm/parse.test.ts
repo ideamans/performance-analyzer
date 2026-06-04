@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { analyzeContainer } from './analyze.js'
-import { parseGtmResource } from './parse.js'
+import { parseGtmContainer } from './parse.js'
 
-// A minimal but realistic gtm.js body. Two __e (Event) variables drive firing:
-//   macro 0 = Event (__e)
-//   predicate 0: Event _eq "gtm.js"  (pageview)
-//   predicate 1: Event _eq "gtm.dom" (DOM ready)
-//   predicate 2: Event _eq "purchase" (custom)
-// rules wire tags to predicates. Tag bodies include a brace+quote in vtp_html to
-// exercise the string-aware brace scanner.
+// Minimal realistic gtm.js. macro 0 = Event(__e); predicates compare it to
+// gtm.js / gtm.dom / purchase. The custom HTML references a KNOWN vendor domain
+// (Facebook) and embeds a brace+quote to exercise the parser.
 const SAMPLE = `
 window.google_tag_manager = {};
 var data = {
@@ -17,10 +13,10 @@ var data = {
     "version": "42",
     "macros": [ {"function":"__e"}, {"function":"__v","vtp_name":"x"} ],
     "tags": [
-      {"function":"__html","vtp_html":"<script>var o={a:1};fetch('https://vendor-a.example/p.gif?q={x}')</script>"},
+      {"function":"__html","vtp_html":"<script>var o={a:1};fbq('init');s='https://connect.facebook.net/en_US/fbevents.js?x={a}'</script>"},
       {"function":"__gaawe","vtp_eventName":"page_view"},
       {"function":"__ua","vtp_trackType":"TRACK_PAGEVIEW"},
-      {"function":"__paused"}
+      {"function":"__paused","vtp_originalTagType":"html"}
     ],
     "predicates": [
       {"function":"_eq","arg0":["macro",0],"arg1":"gtm.js"},
@@ -37,49 +33,50 @@ var data = {
 var b = 1;
 `
 
-describe('parseGtmResource', () => {
-  it('extracts resource even with braces/quotes inside Custom HTML', () => {
-    const r = parseGtmResource(SAMPLE)
+describe('parseGtmContainer', () => {
+  it('decodes the container via AST', () => {
+    const r = parseGtmContainer(SAMPLE)
     expect(r).not.toBeNull()
-    expect(r!.version).toBe('42')
-    expect(r!.tags).toHaveLength(4)
-    expect(r!.macros).toHaveLength(2)
+    expect(r!.parser).toBe('ast')
+    expect(r!.resource.version).toBe('42')
+    expect(r!.resource.tags).toHaveLength(4)
   })
 
-  it('returns null when there is no var data block', () => {
-    expect(parseGtmResource('console.log("no container here")')).toBeNull()
+  it('handles braces/quotes inside Custom HTML', () => {
+    const r = parseGtmContainer(SAMPLE)
+    expect(r!.resource.tags![0]!.function).toBe('__html')
   })
 
-  it('returns null on malformed JSON rather than throwing', () => {
-    expect(parseGtmResource('var data = {not json,,,}')).toBeNull()
+  it('returns null when there is no container body', () => {
+    expect(parseGtmContainer('console.log("nope")')).toBeNull()
   })
 })
 
 describe('analyzeContainer', () => {
-  const container = analyzeContainer('GTM-TEST', 'https://x/gtm.js?id=GTM-TEST', parseGtmResource(SAMPLE)!)
+  const c = analyzeContainer(parseGtmContainer(SAMPLE)!.resource)
 
   it('counts custom HTML, legacy UA and paused tags', () => {
-    expect(container.customHtml).toBe(1)
-    expect(container.legacyUa).toBe(1) // __ua
-    expect(container.pausedTags).toBe(1) // __paused
+    expect(c.customHtml).toBe(1)
+    expect(c.legacyUa).toBe(1)
+    expect(c.pausedTags).toBe(1)
   })
 
-  it('classifies firing timing via __e predicates and rules', () => {
-    // tag0 (html) and tag2 (ua) fire on gtm.js → pageview; tag1 (gaawe) fires on
-    // gtm.dom AND purchase → domReady + custom; tag3 (paused) has no rule.
-    expect(container.firing.pageview).toBe(2)
-    expect(container.firing.domReady).toBe(1)
-    expect(container.firing.custom).toBe(1)
-    expect(container.firing.unknown).toBe(1) // paused tag, no firing rule
-    expect(container.firesOnPageview).toBe(2)
+  it('classifies firing via __e predicates and `if` rules', () => {
+    expect(c.firing.pageview).toBe(2) // html + ua on gtm.js
+    expect(c.firing.domReady).toBe(1) // gaawe on gtm.dom
+    expect(c.firing.custom).toBe(1) // gaawe on purchase
+    expect(c.firing.unknown).toBe(1) // paused, no rule
+    expect(c.firesOnPageview).toBe(2)
   })
 
-  it('extracts vendor domains referenced inside Custom HTML', () => {
-    expect(container.customHtmlVendors.map((v) => v.domain)).toContain('vendor-a.example')
+  it('attributes tags to vendors (config domain + template type)', () => {
+    const m = new Map(c.tagsByVendor.map((v) => [v.key, v.count]))
+    expect(m.get('Facebook')).toBe(1) // from the domain in Custom HTML
+    expect(m.get('Google Analytics')).toBe(2) // __gaawe + __ua by template type
   })
 
-  it('labels tag types in the breakdown', () => {
-    const labels = container.tagsByType.map((t) => t.label)
+  it('labels tag types', () => {
+    const labels = c.tagsByType.map((t) => t.label)
     expect(labels).toContain('Custom HTML')
     expect(labels).toContain('GA4 Event')
     expect(labels).toContain('Universal Analytics')

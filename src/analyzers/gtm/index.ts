@@ -1,19 +1,20 @@
 import type { AnalysisResult, Artifacts, Derived, Finding, LighthouseAudit, NetworkRequest } from '../../core/types.js'
 import { round } from '../../core/time.js'
 import type { Analyzer, AnalyzerContext } from '../Analyzer.js'
-import { addFiring, analyzeContainer, mergeTagTypes } from './analyze.js'
-import { parseGtmResource } from './parse.js'
-import type { FiringTiming, GtagIds, GtmContainer, GtmData } from './types.js'
+import { addFiring, analyzeContainer, mergeKeyCounts } from './analyze.js'
+import { parseGtmContainer } from './parse.js'
+import type { FiringTiming, GtagIds, GtmContainer, GtmData, KeyCount, TagTypeCount } from './types.js'
 
-const SCHEMA_VERSION = '1.0.0'
+const SCHEMA_VERSION = '2.0.0'
 const GTM_BASE = 'https://www.googletagmanager.com/gtm.js?id='
 
 /**
- * Analyzer 3: Google Tag Manager bloat. The container bodies aren't in the
- * trace, so we detect container ids from the network and FETCH each gtm.js live
- * to parse its tags/variables/triggers. Persona: someone who wants to put GTM on
- * a diet — how many containers/tags, how much Custom HTML & dead Universal
- * Analytics, what fires on every pageview, and how much traffic/CPU it costs.
+ * Analyzer 3: an OBJECTIVE overview of GTM bloat. Container bodies aren't in the
+ * trace, so container ids are detected from the network and each gtm.js is
+ * fetched live and parsed (AST). Answers, at a glance: how many containers/tags,
+ * what kinds of tags, what they're FOR (vendor attribution by config domain /
+ * template type), and what fires on every pageview. Detailed cost lives in the
+ * third-party analyzer.
  */
 export const gtmAnalyzer: Analyzer<GtmData> = {
   name: 'gtm',
@@ -21,6 +22,7 @@ export const gtmAnalyzer: Analyzer<GtmData> = {
     const { artifacts, derived } = ctx
     const data = await buildGtmData(ctx, artifacts, derived)
     const findings = buildFindings(data)
+    const topVendor = data.tagsByVendor.find((v) => v.key !== '(未帰属)')
 
     return {
       analyzer: 'gtm',
@@ -36,11 +38,11 @@ export const gtmAnalyzer: Analyzer<GtmData> = {
         pausedTags: data.totals.pausedTags,
         variables: data.totals.variables,
         firesOnPageview: data.totals.firesOnPageview,
-        ga4Ids: data.gtagIds.ga4.length,
-        adsIds: data.gtagIds.ads.length,
         transferKB: kb(data.totals.transferBytes),
         cpuMs: round(data.totals.cpuMs),
-        heaviestTagType: data.tagsByType[0]?.label ?? 'n/a',
+        topVendor: topVendor?.key ?? 'n/a',
+        topVendorTags: topVendor?.count ?? 0,
+        topTagType: data.tagsByType[0]?.label ?? 'n/a',
       },
       data,
       findings,
@@ -52,33 +54,39 @@ async function buildGtmData(ctx: AnalyzerContext, artifacts: Artifacts, derived:
   const ids = detectContainerIds(derived.requests)
   const gtagIds = detectGtagIds(derived.requests)
 
-  const containers = await Promise.all(
-    ids.map((c) => fetchAndAnalyze(ctx, c.id, c.url, derived.requests)),
-  )
-
+  const containers = await Promise.all(ids.map((c) => fetchAndAnalyze(ctx, c.id, c.url, derived.requests)))
   const parsed = containers.filter((c) => c.fetched)
-  const tagsByType = mergeTagTypes(parsed.map((c) => c.tagsByType))
-  const firing = parsed.reduce<FiringTiming>(
-    (acc, c) => addFiring(acc, c.firing),
-    { pageview: 0, domReady: 0, windowLoad: 0, interaction: 0, custom: 0, unknown: 0 },
+
+  const tagsByType = mergeKeyCounts<TagTypeCount>(
+    parsed.map((c) => c.tagsByType),
+    (r) => r.label,
   )
+  const tagsByVendor = mergeKeyCounts<KeyCount>(
+    parsed.map((c) => c.tagsByVendor),
+    (r) => r.key,
+  )
+  const firing = parsed.reduce<FiringTiming>((acc, c) => addFiring(acc, c.firing), {
+    pageview: 0,
+    domReady: 0,
+    windowLoad: 0,
+    interaction: 0,
+    custom: 0,
+    unknown: 0,
+  })
 
   const net = gtmNetwork(derived.requests)
   const cpu = gtmEntityCpu(artifacts)
 
   return {
     basis:
-      'Objective (directly parsed): container ids, tag/variable/predicate/rule ' +
-      'counts, tag function-type breakdown, paused/Custom-HTML/UA counts, transfer ' +
-      'bytes. HEURISTIC / not authoritative: (1) firing timing is reconstructed ' +
-      'via __e→predicates→`if` rules and does NOT model blocking/exception ' +
-      'triggers or tag sequencing, so pageview counts can be slightly over-stated; ' +
-      '(2) per-tag cost is NOT measured — Custom-HTML "heaviness" is a count, not ' +
-      'a per-tag time; (3) Custom-HTML vendor domains are text references in the ' +
-      'tag body, not confirmed network loads; (4) CPU/blocking is the "Google Tag ' +
-      'Manager" entity (gtm.js/gtag scripts only) — the cost of vendors that GTM ' +
-      'INJECTS appears under those vendors, so GTM\'s true footprint is larger and ' +
-      'distributed. gtm.js is fetched live, so config may differ from capture time.',
+      'OBJECTIVE counts parsed from each container (fetched live, decoded via AST). ' +
+      'Vendor attribution maps domains found in a tag\'s config (and unambiguous ' +
+      'template types) to third-party-web entities — it answers "what is GTM used ' +
+      'for / which vendor adds the most tags"; a tag may map to several vendors, ' +
+      'so vendor counts can exceed the tag count, and a referenced domain is a ' +
+      'config reference (not a confirmed load — see the third-party analyzer for ' +
+      'actual bytes/CPU). Firing timing is from positive `if` triggers (blocking/' +
+      'exception triggers not modeled). CPU/transfer cover GTM-served scripts only.',
     containers,
     gtagIds,
     totals: {
@@ -97,6 +105,7 @@ async function buildGtmData(ctx: AnalyzerContext, artifacts: Artifacts, derived:
       blockingMs: cpu.blockingMs,
     },
     tagsByType,
+    tagsByVendor,
     firing,
   }
 }
@@ -108,7 +117,7 @@ async function fetchAndAnalyze(
   requests: NetworkRequest[],
 ): Promise<GtmContainer> {
   const net = requests.find((r) => r.url === url)
-  const base: GtmContainer = {
+  const empty: GtmContainer = {
     id,
     url,
     fetched: false,
@@ -122,36 +131,43 @@ async function fetchAndAnalyze(
     legacyUa: 0,
     pausedTags: 0,
     tagsByType: [],
+    tagsByVendor: [],
     firing: { pageview: 0, domReady: 0, windowLoad: 0, interaction: 0, custom: 0, unknown: 0 },
     firesOnPageview: 0,
-    customHtmlVendors: [],
   }
 
   try {
     const res = await ctx.fetch(`${GTM_BASE}${encodeURIComponent(id)}`)
     if (!res.ok) {
       ctx.logger.warn(`GTM ${id}: HTTP ${res.status}`)
-      return { ...base, error: `HTTP ${res.status}` }
+      return { ...empty, error: `HTTP ${res.status}` }
     }
-    const js = await res.text()
-    const resource = parseGtmResource(js)
-    if (!resource) {
+    const parsed = parseGtmContainer(await res.text())
+    if (!parsed) {
       ctx.logger.warn(`GTM ${id}: could not parse container body`)
-      return { ...base, error: 'parse failed' }
+      return { ...empty, error: 'parse failed' }
     }
-    const analyzed = analyzeContainer(id, url, resource)
-    return { ...analyzed, transferBytes: net?.transferSize, decodedBytes: net?.resourceSize }
+    const a = analyzeContainer(parsed.resource)
+    return {
+      id,
+      url,
+      fetched: true,
+      parser: parsed.parser,
+      transferBytes: net?.transferSize,
+      decodedBytes: net?.resourceSize,
+      ...a,
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     ctx.logger.warn(`GTM ${id}: fetch error ${msg}`)
-    return { ...base, error: msg }
+    return { ...empty, error: msg }
   }
 }
 
 // --- detection from the network --------------------------------------------
 
 function detectContainerIds(requests: NetworkRequest[]): Array<{ id: string; url: string }> {
-  const seen = new Map<string, string>() // id → url
+  const seen = new Map<string, string>()
   for (const r of requests) {
     if (!r.url.includes('googletagmanager.com/gtm.js')) continue
     const m = /[?&]id=(GTM-[A-Z0-9]+)/i.exec(r.url)
@@ -199,7 +215,7 @@ function gtmEntityCpu(artifacts: Artifacts): { cpuMs: number; blockingMs: number
   }
 }
 
-// --- findings (diet-oriented) ----------------------------------------------
+// --- findings (objective overview, "what's GTM for / why so many") ----------
 
 function buildFindings(data: GtmData): Finding[] {
   const findings: Finding[] = []
@@ -213,65 +229,45 @@ function buildFindings(data: GtmData): Finding[] {
   findings.push({
     severity: t.containerCount >= 4 ? 'warn' : 'info',
     message:
-      `GTM コンテナ ${t.containerCount}個 (解析成功 ${t.parsedContainers})、` +
-      `タグ計 ${t.tags} / 変数 ${t.variables} / 転送 ${kb(t.transferBytes)}KB / CPU ${round(t.cpuMs)}ms`,
+      `GTM コンテナ ${t.containerCount}個 (解析成功 ${t.parsedContainers})、タグ計 ${t.tags} / 変数 ${t.variables}。` +
+      `転送 ${kb(t.transferBytes)}KB / GTM配信スクリプトCPU ${round(t.cpuMs)}ms (実負荷の詳細は third-party 分析へ)`,
     evidence: { containers: data.containers.map((c) => c.id), tags: t.tags },
   })
 
-  if (t.customHtml > 0) {
-    findings.push({
-      severity: t.customHtml >= 20 ? 'warn' : 'info',
-      message: `カスタムHTMLタグ ${t.customHtml}個 (任意JSの注入＝重い/監査困難。ダイエット最優先候補)`,
-      evidence: { customHtml: t.customHtml },
-    })
-  }
-
-  if (t.legacyUa > 0) {
-    findings.push({
-      severity: 'warn',
-      message: `旧Universal Analytics系タグ ${t.legacyUa}個 — UAは計測停止済み。死蔵の可能性大、まず削除候補`,
-      evidence: { legacyUa: t.legacyUa },
-    })
-  }
-
-  if (t.pausedTags > 0) {
-    findings.push({
-      severity: 'warn',
-      message: `停止中(paused)タグ ${t.pausedTags}個 — UIで止めてもコンテナには同梱され配信される死蔵。削除でサイズ削減`,
-      evidence: { pausedTags: t.pausedTags },
-    })
-  }
-
-  if (t.firesOnPageview > 0) {
-    findings.push({
-      severity: t.firesOnPageview >= 30 ? 'warn' : 'info',
-      message: `pageview(全ページ)で発火するタグ ${t.firesOnPageview}個 — 常時かかるコスト。遅延発火に回せないか要検討`,
-      evidence: { firesOnPageview: t.firesOnPageview },
-    })
-  }
-
-  const topTypes = data.tagsByType.slice(0, 5)
-  if (topTypes.length > 0) {
+  // The headline answer: which vendors the tags are FOR.
+  const vendors = data.tagsByVendor.filter((v) => v.key !== '(未帰属)').slice(0, 6)
+  if (vendors.length > 0) {
     findings.push({
       severity: 'info',
-      message: 'タグ種別内訳(上位): ' + topTypes.map((x) => `${x.label} ${x.count}${x.deprecated ? '(非推奨)' : ''}`).join(' / '),
-      evidence: { tagsByType: data.tagsByType },
+      message: 'タグの用途(ベンダー別タグ数): ' + vendors.map((v) => `${v.key} ${v.count}`).join(' / '),
+      evidence: { tagsByVendor: data.tagsByVendor.slice(0, 15) },
     })
   }
 
-  if (data.gtagIds.universalAnalytics.length > 0) {
-    findings.push({
-      severity: 'warn',
-      message: `gtag経由のUA計測ID ${data.gtagIds.universalAnalytics.length}個 (${data.gtagIds.universalAnalytics.join(', ')}) — 停止済み計測`,
-    })
-  }
+  findings.push({
+    severity: 'info',
+    message: 'タグ種別内訳: ' + data.tagsByType.slice(0, 6).map((x) => `${x.label} ${x.count}${x.deprecated ? '(非推奨)' : ''}`).join(' / '),
+    evidence: { tagsByType: data.tagsByType },
+  })
 
-  // Per-container quick view to point at the biggest offender.
-  const heaviest = [...data.containers].filter((c) => c.fetched).sort((a, b) => b.tags - a.tags)[0]
-  if (heaviest) {
+  findings.push({
+    severity: 'info',
+    message:
+      `発火: pageview ${data.firing.pageview} / DOM ${data.firing.domReady} / load ${data.firing.windowLoad} / ` +
+      `interaction ${data.firing.interaction} / custom ${data.firing.custom} / 不明 ${data.firing.unknown}`,
+    evidence: { firing: data.firing },
+  })
+
+  // Objective dead-weight counts (light reflection, no cost claim).
+  const deadweight: string[] = []
+  if (t.customHtml > 0) deadweight.push(`カスタムHTML ${t.customHtml}`)
+  if (t.legacyUa > 0) deadweight.push(`旧UA ${t.legacyUa}`)
+  if (t.pausedTags > 0) deadweight.push(`停止中 ${t.pausedTags}`)
+  if (deadweight.length > 0) {
     findings.push({
-      severity: 'info',
-      message: `最大コンテナ ${heaviest.id}: タグ${heaviest.tags} (カスタムHTML${heaviest.customHtml}/UA${heaviest.legacyUa}) / 変数${heaviest.variables} / pageview発火${heaviest.firesOnPageview}`,
+      severity: t.legacyUa > 0 || t.pausedTags > 0 || t.customHtml >= 30 ? 'warn' : 'info',
+      message: `見直し候補の計数: ${deadweight.join(' / ')} (旧UA/停止中は死蔵、カスタムHTMLは任意JS)`,
+      evidence: { customHtml: t.customHtml, legacyUa: t.legacyUa, pausedTags: t.pausedTags },
     })
   }
 

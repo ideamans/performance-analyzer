@@ -22,6 +22,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "acorn": "^8.14.0",
     "chrome-launcher": "^1.1.2",
     "lighthouse": "^12.8.2",
     "third-party-web": "^0.27.0"

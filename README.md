@@ -26,13 +26,13 @@ Lighthouse でトレースを **1回だけ取得** し、その同じ成果物�
   - 冗長性検出（アナリティクス重複・GTM コンテナ複数・GA4 計測ID 複数）
   - レンダーブロッキングな第三者、遅延読込（ファサード）候補
   - **CDN ライブラリ（jsDelivr/cdnjs/jQuery/Google CDN 等）は「置換可能」としてタグから除外**し別枠表示。**Google Fonts はタグに含める**
-- **GTM 詳細分析（`gtm`）** — 「GTM がどれだけ肥大化しているか」を反省し、どこから削るか
-  - コンテナを検出して **gtm.js を実取得（HTTP）し本文をパース**（`var data` を文字列内波括弧に強いスキャナで抽出）
+- **GTM 詳細分析（`gtm`）** — 「GTM がなぜ肥大化しているか／何に使っているか」を**客観的な計数**で外観把握
+  - コンテナを検出して **gtm.js を実取得（HTTP）し AST で正確に本文を復元**（`var data` をリテラル評価、失敗時のみ JSON フォールバック）
   - コンテナ数・タグ数・変数数、タグ種別内訳（GA4/カスタムHTML/広告変換/Custom Template…）
-  - **カスタムHTML タグ数**（任意JS・重い/監査困難）、**旧 Universal Analytics**（計測停止＝死蔵）、**停止中(paused)タグ**（コンテナ同梱の死蔵）
-  - **発火タイミング**別（pageview / DOM Ready / window load / interaction / custom）— 全ページ発火タグ＝常時コスト
-  - カスタムHTML が参照するベンダードメイン（例: Facebook を N 個のカスタムHTMLで注入、を特定）
-  - 転送量・CPU（third-party の「Google Tag Manager」と連携）
+  - **ベンダー別タグ数**（設定内のドメイン＋テンプレート種別を third-party-web で機械的に帰属）— 「タグが多い主因はどの第三者か」に即答
+  - **カスタムHTML タグ数 / 旧 Universal Analytics（計測停止）/ 停止中(paused)タグ** の見直し候補カウント
+  - **発火タイミング**別タグ数（pageview / DOM Ready / window load / interaction / custom）
+  - ※ 重さ（転送/CPU）の詳細は third-party 分析に委譲。GTM は「外観の客観分類」に徹する設計
 
 ---
 

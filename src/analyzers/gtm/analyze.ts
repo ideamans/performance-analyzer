@@ -1,5 +1,9 @@
+import thirdPartyWeb from 'third-party-web'
+
 import type { GtmResource } from './parse.js'
-import type { CustomHtmlVendor, FiringTiming, GtmContainer, TagTypeCount } from './types.js'
+import type { FiringTiming, KeyCount, TagTypeCount } from './types.js'
+
+const { getEntity } = thirdPartyWeb
 
 /** Friendly labels for GTM tag function ids, and deprecation flags. */
 const TAG_LABELS: Record<string, { label: string; deprecated?: boolean }> = {
@@ -11,7 +15,6 @@ const TAG_LABELS: Record<string, { label: string; deprecated?: boolean }> = {
   __gclidw: { label: 'Conversion Linker' },
   __awct: { label: 'Google Ads Conversion' },
   __sp: { label: 'Google Ads Remarketing' },
-  __gcs: { label: 'Conversion (legacy)', deprecated: true },
   __baut: { label: 'Microsoft UET (Bing)' },
   __twitter_website_tag: { label: 'Twitter/X' },
   __pntr: { label: 'Pinterest' },
@@ -29,6 +32,20 @@ const TAG_LABELS: Record<string, { label: string; deprecated?: boolean }> = {
   __paused: { label: 'Paused (停止中・死蔵)' },
 }
 
+/** Tag function id → vendor, for templates whose vendor is unambiguous. */
+const FUNCTION_VENDOR: Record<string, string> = {
+  __gaawe: 'Google Analytics',
+  __ua: 'Google Analytics',
+  __googtag: 'Google',
+  __gclidw: 'Google Ads',
+  __awct: 'Google Ads',
+  __sp: 'Google Ads',
+  __baut: 'Bing Ads',
+  __twitter_website_tag: 'Twitter',
+  __pntr: 'Pinterest',
+  __bzi: 'LinkedIn',
+}
+
 const INTERACTION_EVENTS = new Set([
   'gtm.click',
   'gtm.linkClick',
@@ -40,6 +57,21 @@ const INTERACTION_EVENTS = new Set([
   'gtm.video',
 ])
 
+export interface ContainerAnalysis {
+  version?: string | number
+  tags: number
+  variables: number
+  predicates: number
+  rules: number
+  customHtml: number
+  legacyUa: number
+  pausedTags: number
+  tagsByType: TagTypeCount[]
+  tagsByVendor: KeyCount[]
+  firing: FiringTiming
+  firesOnPageview: number
+}
+
 function labelFor(fn: string | undefined): { label: string; deprecated?: boolean } {
   if (!fn) return { label: 'unknown' }
   if (TAG_LABELS[fn]) return TAG_LABELS[fn]!
@@ -47,38 +79,40 @@ function labelFor(fn: string | undefined): { label: string; deprecated?: boolean
   return { label: `その他 (${fn})` }
 }
 
-/** Analyze a parsed container resource into the per-container shape (no net data). */
-export function analyzeContainer(id: string, url: string, resource: GtmResource): GtmContainer {
+/** Objectively analyze a parsed container resource (no network data). */
+export function analyzeContainer(resource: GtmResource): ContainerAnalysis {
   const tags = resource.tags ?? []
   const macros = resource.macros ?? []
   const predicates = resource.predicates ?? []
   const rules = resource.rules ?? []
 
-  // tag-type breakdown, grouped by friendly label
   const byLabel = new Map<string, TagTypeCount>()
+  const byVendor = new Map<string, number>()
   let customHtml = 0
   let legacyUa = 0
   let pausedTags = 0
+
   for (const t of tags) {
     const { label, deprecated } = labelFor(t.function)
     if (t.function === '__html') customHtml++
     if (t.function === '__paused') pausedTags++
-    if (deprecated) legacyUa += 1
+    if (deprecated) legacyUa++
+
     let row = byLabel.get(label)
     if (!row) {
       row = { type: t.function ?? 'unknown', label, count: 0, deprecated }
       byLabel.set(label, row)
     }
     row.count++
+
+    const vendors = tagVendors(t)
+    if (vendors.length === 0) byVendor.set('(未帰属)', (byVendor.get('(未帰属)') ?? 0) + 1)
+    for (const v of vendors) byVendor.set(v, (byVendor.get(v) ?? 0) + 1)
   }
-  const tagsByType = [...byLabel.values()].sort((a, b) => b.count - a.count)
 
   const { firing, firesOnPageview } = classifyFiring(resource)
 
   return {
-    id,
-    url,
-    fetched: true,
     version: resource.version,
     tags: tags.length,
     variables: macros.length,
@@ -87,14 +121,45 @@ export function analyzeContainer(id: string, url: string, resource: GtmResource)
     customHtml,
     legacyUa,
     pausedTags,
-    tagsByType,
+    tagsByType: [...byLabel.values()].sort((a, b) => b.count - a.count),
+    tagsByVendor: toKeyCounts(byVendor),
     firing,
     firesOnPageview,
-    customHtmlVendors: customHtmlVendors(resource),
   }
 }
 
-/** Resolve each tag's firing events via predicates(__e) → rules → tags. */
+/** Vendor(s) a tag serves: recognized config domains, else its template vendor. */
+function tagVendors(tag: Record<string, unknown>): string[] {
+  const ents = new Set<string>()
+  for (const host of tagDomains(tag)) {
+    const e = getEntity(`https://${host}/`)
+    if (e?.name) ents.add(e.name)
+  }
+  if (ents.size === 0) {
+    const fn = typeof tag.function === 'string' ? tag.function : undefined
+    const fv = fn ? FUNCTION_VENDOR[fn] : undefined
+    if (fv) ents.add(fv)
+  }
+  return [...ents]
+}
+
+/** Hostnames referenced anywhere in a tag's string config values. */
+function tagDomains(tag: Record<string, unknown>): Set<string> {
+  const hosts = new Set<string>()
+  const visit = (v: unknown): void => {
+    if (typeof v === 'string') {
+      for (const m of v.matchAll(/https?:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi)) hosts.add(m[1]!.toLowerCase())
+    } else if (Array.isArray(v)) {
+      for (const x of v) visit(x)
+    } else if (v && typeof v === 'object') {
+      for (const x of Object.values(v)) visit(x)
+    }
+  }
+  visit(tag)
+  return hosts
+}
+
+/** Resolve each tag's firing events via __e macros → `if` predicates → rules. */
 function classifyFiring(r: GtmResource): { firing: FiringTiming; firesOnPageview: number } {
   const tags = r.tags ?? []
   const macros = r.macros ?? []
@@ -117,9 +182,7 @@ function classifyFiring(r: GtmResource): { firing: FiringTiming; firesOnPageview
   const tagEvents = new Map<number, Set<string>>()
   for (const rule of rules) {
     if (!Array.isArray(rule)) continue
-    // Firing events come from positive `if` conditions only. `unless` is an
-    // exception (negative) condition and `block` removes tags — neither marks
-    // when a tag fires, so they must not contribute firing events.
+    // Positive `if` conditions only — `unless`/`block` don't mark when a tag fires.
     const preds: number[] = []
     const addTags: number[] = []
     for (const clause of rule) {
@@ -163,24 +226,8 @@ function classifyFiring(r: GtmResource): { firing: FiringTiming; firesOnPageview
   return { firing, firesOnPageview }
 }
 
-/** Domains referenced inside Custom HTML tags — a best-effort vendor hint. */
-function customHtmlVendors(r: GtmResource): CustomHtmlVendor[] {
-  const counts = new Map<string, number>()
-  for (const t of r.tags ?? []) {
-    if (t.function !== '__html') continue
-    const html = typeof t.vtp_html === 'string' ? t.vtp_html : ''
-    const seen = new Set<string>()
-    for (const m of html.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)) {
-      const host = m[1]!.toLowerCase()
-      if (seen.has(host)) continue
-      seen.add(host)
-      counts.set(host, (counts.get(host) ?? 0) + 1)
-    }
-  }
-  return [...counts.entries()]
-    .map(([domain, count]) => ({ domain, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10)
+function toKeyCounts(map: Map<string, number>): KeyCount[] {
+  return [...map.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count)
 }
 
 /** Sum two firing-timing breakdowns. */
@@ -195,14 +242,15 @@ export function addFiring(a: FiringTiming, b: FiringTiming): FiringTiming {
   }
 }
 
-/** Merge tag-type breakdowns across containers, by label. */
-export function mergeTagTypes(rows: TagTypeCount[][]): TagTypeCount[] {
-  const map = new Map<string, TagTypeCount>()
+/** Merge keyed counts (tag types or vendors) across containers. */
+export function mergeKeyCounts<T extends { count: number }>(rows: T[][], keyOf: (r: T) => string): T[] {
+  const map = new Map<string, T>()
   for (const list of rows) {
     for (const r of list) {
-      const existing = map.get(r.label)
+      const k = keyOf(r)
+      const existing = map.get(k)
       if (existing) existing.count += r.count
-      else map.set(r.label, { ...r })
+      else map.set(k, { ...r })
     }
   }
   return [...map.values()].sort((a, b) => b.count - a.count)
