@@ -17,6 +17,7 @@ import type { Analyzer, AnalyzerContext } from '../Analyzer.js'
 import type {
   CountBytes,
   Crp,
+  CrpResource,
   HtmlCss,
   LatencyBreakdown,
   LcpDetail,
@@ -512,18 +513,22 @@ function buildCrp(artifacts: Artifacts, requests: NetworkRequest[], lcp: LcpDeta
   const chains = details?.chains as Record<string, unknown> | undefined
   const depth = typeof longest?.length === 'number' ? longest.length : chainDepth(chains)
 
+  const imgUrl = lcp.image?.url
+  const imgReq = imgUrl ? requests.find((r) => r.url === imgUrl) : undefined
+  const resources = buildCrpResources(artifacts, requests, imgReq)
+
   const base: Crp = {
     depth,
     longestPathMs: round(numv(longest?.duration)),
     longestPathTransferBytes: numv(longest?.transferSize),
+    resources,
+    crpOrigins: new Set(resources.map((r) => r.host)).size,
     obstructorsBeforeImageStart: emptyGroup(),
     obstructorsDuringImageLoad: emptyGroup(),
   }
 
   // Requests are pre-sorted by startTime (see buildRequests).
   const images = requests.filter((r) => r.resourceType === 'image')
-  const imgUrl = lcp.image?.url
-  const imgReq = imgUrl ? requests.find((r) => r.url === imgUrl) : undefined
   if (!imgReq) return base
 
   const idxImages = images.findIndex((r) => r === imgReq)
@@ -554,6 +559,73 @@ function buildCrp(artifacts: Artifacts, requests: NetworkRequest[], lcp: LcpDeta
   base.obstructorsBeforeImageStart = group(beforeStart)
   base.obstructorsDuringImageLoad = group(duringLoad)
   return base
+}
+
+/**
+ * Assemble the critical-path resources (document + render-blocking CSS/JS + LCP
+ * image) with each fetch decomposed, so a slow critical fetch is visible:
+ * connection latency (DNS/connect/TLS) vs server wait (TTFB) vs download (size).
+ */
+function buildCrpResources(
+  artifacts: Artifacts,
+  requests: NetworkRequest[],
+  imgReq: NetworkRequest | undefined,
+): CrpResource[] {
+  const fcp = numv(artifacts.lhr.audits?.metrics?.details?.items?.[0]?.['observedFirstContentfulPaint'])
+  const renderBlockingUrls = renderBlockingSet(artifacts)
+  const role = new Map<NetworkRequest, CrpResource['role']>()
+
+  // Documents (HTML) and stylesheets (render-blocking by default) up to FCP.
+  for (const r of requests) {
+    if (r.resourceType === 'document') role.set(r, 'document')
+    else if (r.resourceType === 'stylesheet' && (fcp === undefined || r.startTime < fcp)) role.set(r, 'stylesheet')
+    else if (r.resourceType === 'script' && renderBlockingUrls.has(r.url)) role.set(r, 'script')
+  }
+  if (imgReq) role.set(imgReq, 'lcp-image')
+
+  const resources = [...role.entries()].map(([r, roleName]) => toCrpResource(r, roleName))
+  resources.sort((a, b) => b.totalMs - a.totalMs)
+  return resources
+}
+
+/** Render-blocking resource URLs from the Lighthouse audit (best-effort). */
+function renderBlockingSet(artifacts: Artifacts): Set<string> {
+  const audit = artifacts.lhr.audits?.['render-blocking-resources'] as LighthouseAudit | undefined
+  const items = (audit?.details?.items ?? []) as Array<Record<string, unknown>>
+  return new Set(items.map((i) => (typeof i.url === 'string' ? i.url : '')).filter(Boolean))
+}
+
+function toCrpResource(r: NetworkRequest, role: CrpResource['role']): CrpResource {
+  const setup = r.timing.connectionSetup ?? 0
+  const waiting = r.timing.waiting ?? 0
+  const download = r.timing.download ?? 0
+  const phases: Array<[CrpResource['bottleneck'], number]> = [
+    ['connection', setup],
+    ['waiting', waiting],
+    ['download', download],
+  ]
+  const bottleneck = phases.reduce((max, p) => (p[1] > max[1] ? p : max))[0]
+  const newConnection = (r.timing.dns ?? 0) > 0 || (r.timing.connect ?? 0) > 0
+
+  return {
+    role,
+    url: r.url,
+    host: r.host,
+    party: r.party,
+    transferBytes: r.transferSize,
+    resourceBytes: r.resourceSize,
+    startMs: round(r.startTime)!,
+    endMs: round(r.endTime)!,
+    totalMs: round(r.endTime - r.startTime)!,
+    dnsMs: round(r.timing.dns),
+    connectMs: round(r.timing.connect),
+    tlsMs: round(r.timing.tls),
+    connectionSetupMs: round(setup),
+    waitingMs: round(waiting),
+    downloadMs: round(download),
+    newConnection,
+    bottleneck,
+  }
 }
 
 function emptyGroup(): ObstructionGroup {
@@ -729,6 +801,24 @@ function buildFindings(data: LcpData): Finding[] {
     }
   }
 
+  // Slow critical-path fetches: connection latency (DNS/connect/TLS) vs server
+  // response (TTFB) vs download/size — so a slow critical resource is obvious.
+  const slowCrp = data.crp.resources.filter((r) => r.totalMs >= 100).slice(0, 4)
+  if (slowCrp.length > 0) {
+    findings.push({
+      severity: (data.crp.resources[0]?.totalMs ?? 0) >= 500 ? 'warn' : 'info',
+      message:
+        'CRPリソースの取得: ' +
+        slowCrp
+          .map(
+            (r) =>
+              `${r.role} ${shortUrl(r.url)} ${r.totalMs}ms[主因:${crpPhaseLabel(r.bottleneck)}${r.newConnection ? '+新規接続' : ''}] ${kb(r.transferBytes)}KB`,
+          )
+          .join(' / '),
+      evidence: { resources: data.crp.resources.slice(0, 6), crpOrigins: data.crp.crpOrigins },
+    })
+  }
+
   const tp = data.network.toLcp?.thirdParty
   if (tp && tp.count > 0) {
     findings.push({
@@ -743,6 +833,10 @@ function buildFindings(data: LcpData): Finding[] {
 
 function kb(bytes: number): number {
   return Math.round(bytes / 1024)
+}
+
+function crpPhaseLabel(b: CrpResource['bottleneck']): string {
+  return b === 'connection' ? '接続/レイテンシ' : b === 'waiting' ? 'サーバ応答(TTFB)' : 'ダウンロード'
 }
 
 /** Summarize an obstruction group: byType counts + top single offender. */

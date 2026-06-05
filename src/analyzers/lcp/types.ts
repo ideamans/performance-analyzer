@@ -147,11 +147,49 @@ export interface ObstructionGroup {
   top: CriticalResource[]
 }
 
+/**
+ * A critical-path resource (HTML document, render-blocking CSS/JS, or the LCP
+ * image) with its fetch decomposed, so a slow critical fetch is obvious:
+ * connection latency (DNS/connect/TLS) vs server wait (TTFB) vs download (size).
+ */
+export interface CrpResource {
+  role: 'document' | 'stylesheet' | 'script' | 'lcp-image'
+  url: string
+  host: string
+  party: 'first' | 'third'
+  transferBytes: number
+  resourceBytes: number
+  startMs: number
+  endMs: number
+  totalMs: number
+  dnsMs?: number
+  connectMs?: number
+  tlsMs?: number
+  /** Stall + DNS + connect + TLS before bytes are sent. */
+  connectionSetupMs?: number
+  /** TTFB: request sent → first byte (server think + RTT). */
+  waitingMs?: number
+  /** First byte → finished (transfer over the wire). */
+  downloadMs?: number
+  /** True when the fetch paid a new-connection handshake (DNS/connect/TLS). */
+  newConnection: boolean
+  /** Which phase dominated this resource's fetch. */
+  bottleneck: 'connection' | 'waiting' | 'download'
+}
+
 export interface Crp {
   /** critical-request-chains depth / longest path (Lighthouse). */
   depth: number
   longestPathMs?: number
   longestPathTransferBytes?: number
+
+  /**
+   * Each critical-path resource with its fetch broken down (latency / wait /
+   * download / size). Sorted by total fetch time, slowest first.
+   */
+  resources: CrpResource[]
+  /** Distinct origins on the critical path (each new origin = a handshake). */
+  crpOrigins: number
 
   /** Where the LCP image sits in the request order. */
   lcpImage?: {
