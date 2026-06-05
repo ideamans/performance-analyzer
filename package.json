@@ -1,6 +1,6 @@
 {
   "name": "performance-analyzer",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Capture Lighthouse performance traces and analyze them from multiple angles (LCP, third-party tags, GTM).",
   "type": "module",
   "exports": {
