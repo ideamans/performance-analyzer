@@ -1,7 +1,6 @@
 import * as chromeLauncher from 'chrome-launcher'
-import lighthouse from 'lighthouse'
-import desktopConfig from 'lighthouse/core/config/desktop-config.js'
 
+import { resolveChromePath } from './browser.js'
 import { THROTTLING } from './throttling.js'
 
 import type {
@@ -18,6 +17,8 @@ export interface RunOptions {
   chromeFlags?: string[]
   /** Lighthouse log level. Default: 'error'. */
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'verbose'
+  /** Progress messages (e.g. Chrome download). */
+  onLog?: (msg: string) => void
 }
 
 /** Result of a single Lighthouse run, before persistence. */
@@ -36,7 +37,27 @@ export interface SingleRun {
  * desktop uses the bundled desktop preset.
  */
 export async function runLighthouse(url: string, opts: RunOptions): Promise<SingleRun> {
+  // Lighthouse is imported lazily so the analyze-only commands stay pure JS and
+  // can be compiled to a standalone binary (Lighthouse loads runtime assets that
+  // don't survive bundling). Capture pulls it in only when actually invoked.
+  let lighthouse: typeof import('lighthouse').default
+  let desktopConfig: typeof import('lighthouse/core/config/desktop-config.js').default
+  try {
+    const [lh, dc] = await Promise.all([import('lighthouse'), import('lighthouse/core/config/desktop-config.js')])
+    lighthouse = lh.default
+    desktopConfig = dc.default
+  } catch (err) {
+    throw new Error(
+      'Lighthouse failed to load. `capture` is not supported from a compiled single ' +
+        'binary (Lighthouse reads runtime assets that bundling drops) — run `capture` ' +
+        'via `bun`/`node` with dependencies installed. The `analyze` commands work ' +
+        `standalone. Original error: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
+  const chromePath = await resolveChromePath(opts.onLog)
   const chrome = await chromeLauncher.launch({
+    chromePath,
     chromeFlags: ['--headless=new', ...(opts.chromeFlags ?? [])],
   })
 

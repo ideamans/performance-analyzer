@@ -14,6 +14,8 @@ export interface CaptureOptions {
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'verbose'
   /** Called after each run completes (1-based index), for progress reporting. */
   onRun?: (index: number, total: number, run: SingleRun) => void
+  /** Progress messages (e.g. Chrome download). */
+  onLog?: (msg: string) => void
 }
 
 /**
@@ -30,6 +32,7 @@ export async function capture(url: string, opts: CaptureOptions = {}): Promise<A
       device,
       chromeFlags: opts.chromeFlags,
       logLevel: opts.logLevel,
+      onLog: opts.onLog,
     })
     runs.push(run)
     opts.onRun?.(i + 1, total, run)

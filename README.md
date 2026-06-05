@@ -105,6 +105,30 @@ node dist/cli.js analyze third-party  ./runs/slow --out ./reports
 
 ---
 
+## 配布 / 単独CLI（Bun）と Chrome 自動取得
+
+### Chrome の自動取得
+`capture` 実行時、Chrome を次の順で解決します（どの環境でも動くように）:
+1. `CHROME_PATH` 環境変数、またはインストール済み Chrome を検出
+2. 無ければ **Chrome-for-Testing を自動ダウンロード**（`@puppeteer/browsers`、`~/.cache/performance-analyzer/browsers` にキャッシュ）
+
+→ 「バイナリ/パッケージを入れて実行 → 必要なら Chrome が自動DL → Lighthouse 実行」が成立します。
+
+### Bun での実行・単一バイナリ化
+- **Bun でそのまま実行可能**（検証済み）: `bun src/cli.ts capture <URL> --out <dir>` / `bun src/cli.ts analyze <angle> <dir>`
+- **`analyze` は単一バイナリ化できます**（純JS）:
+  ```bash
+  npm run build:binary      # bun build --compile → dist/performance-analyzer
+  ./dist/performance-analyzer analyze lcp ./runs/fast --stdout
+  ```
+  LCP / third-party / GTM 解析は Chrome 不要で、保存済み artifacts に対しどこでも動きます。
+- **`capture` は単一バイナリでは未対応**: Lighthouse がロケール等の実行時アセットを
+  ファイルから読むため、`bun build --compile` の自己完結バイナリでは動きません
+  （その旨を明示エラーで案内）。`capture` は **`bun`/`node` で依存込み実行**してください
+  （Chrome 自動DL はそのまま機能します）。
+
+> まとめ: 解析は「単一バイナリ or Bun/Node」、計測は「Bun/Node（+自動Chrome）」。
+
 ## 設計
 
 ```

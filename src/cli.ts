@@ -162,6 +162,7 @@ async function main(): Promise<void> {
     runs,
     outDir: resolvedOut,
     logLevel: (args.options['log-level'] as never) ?? 'error',
+    onLog: (msg) => console.error(msg),
     onRun: (index, total, run) => {
       const lcp = run.metrics.largestContentfulPaint
       console.error(`  run ${index}/${total}: LCP=${lcp ? Math.round(lcp) + 'ms' : 'n/a'}`)
