@@ -1,5 +1,6 @@
 node_modules/
 dist/
+performance-analyzer
 runs/
 *.log
 .DS_Store

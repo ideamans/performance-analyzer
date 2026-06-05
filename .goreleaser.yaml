@@ -1,0 +1,50 @@
+# GoReleaser config using its native `bun` builder: GoReleaser invokes
+# `bun build --compile` for each target, then archives / checksums / releases.
+# Note: the produced binary runs the `analyze` commands standalone; `capture`
+# needs bun/node because Lighthouse loads runtime assets (see README).
+version: 2
+
+project_name: performance-analyzer
+
+before:
+  hooks:
+    - npm ci
+
+builds:
+  - id: performance-analyzer
+    builder: bun
+    main: ./src/cli.ts
+    binary: performance-analyzer
+    targets:
+      - bun-linux-x64
+      - bun-linux-arm64
+      - bun-darwin-x64
+      - bun-darwin-arm64
+      - bun-windows-x64
+
+archives:
+  - id: default
+    ids: [performance-analyzer]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  prerelease: auto

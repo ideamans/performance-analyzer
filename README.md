@@ -129,6 +129,13 @@ node dist/cli.js analyze third-party  ./runs/slow --out ./reports
 
 > まとめ: 解析は「単一バイナリ or Bun/Node」、計測は「Bun/Node（+自動Chrome）」。
 
+### CI / リリース（GitHub Actions）
+- **test**（`main`/`develop` への push・PR）: 型チェック・vitest・ビルド＋単一バイナリのコンパイルスモーク
+- **release**（`v*` タグ push）: **GoReleaser のネイティブ `bun` ビルダー**で
+  5ターゲット（linux/darwin × amd64/arm64、windows x64）を `bun build --compile` し、
+  アーカイブ・チェックサム・GitHub Release を自動生成（`.goreleaser.yaml`）
+- リリースバイナリは `analyze` 用途。`capture` は Bun/Node 実行（Chrome 自動DL）を利用
+
 ## 設計
 
 ```
