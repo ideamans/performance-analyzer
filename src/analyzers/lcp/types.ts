@@ -215,6 +215,27 @@ export interface Crp {
   obstructorsDuringImageLoad: ObstructionGroup // overlap the image download → compete for bandwidth/connections
 }
 
+/**
+ * MECE split of a time window into how it was spent (wall-clock):
+ *  - cpuMs:        main thread occupied
+ *  - networkWaitMs: ≥1 request in flight while the main thread is idle
+ *  - deadMs:       neither — truly idle (timer/scheduling stall, throttle gaps)
+ * cpuMs + networkWaitMs + deadMs === windowMs.
+ */
+export interface WindowComposition {
+  windowMs: number
+  cpuMs: number
+  networkWaitMs: number
+  deadMs: number
+  /** Auxiliary density: cpu / window (0..1). */
+  cpuRate: number
+}
+
+/** Composition of one LCP phase (observed-clock boundaries). */
+export interface PhaseComposition extends WindowComposition {
+  phase: string // TTFB | Load Delay | Load Time | Render Delay
+}
+
 export interface LcpData {
   basis: string
   timeline: {
@@ -242,4 +263,11 @@ export interface LcpData {
   htmlCss: HtmlCss
   lcp: LcpDetail
   crp: Crp
+  /**
+   * How each LCP phase was spent (CPU / network-wait / dead). Fair to compare
+   * across sites phase-by-phase even when absolute phase durations differ.
+   */
+  phaseComposition: PhaseComposition[]
+  /** Overall composition of [0, LCP]. */
+  compositionToLcp?: WindowComposition
 }

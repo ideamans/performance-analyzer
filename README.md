@@ -13,6 +13,7 @@ Lighthouse でトレースを **1回だけ取得** し、その同じ成果物�
 - **LCP 到達分析（`lcp`）** — FCP/LCP までに「何が起き／何が妨害し／どこが遅いか」
   - LCP 4フェーズ分解（TTFB / Load Delay / Load Time / Render Delay）
   - メインスレッド処理のカテゴリ別内訳（窓 `[0,FCP]` `[0,LCP]`、self-time）
+  - **LCP 4フェーズ × (CPU占有 / ネットワーク待ち / デッドタイム) の MECE 分解**（フェーズ長が違っても公平に比較可。デッドタイム＝CPUもネットワークも進捗しない真の空白）＋ CPU占有率などの補助密度値
   - Long Tasks・TBT（自前算出）
   - ネットワーク種別別・優先度別、レイテンシー律速 vs 帯域律速
   - HTML TTFB / CSS 到達時刻

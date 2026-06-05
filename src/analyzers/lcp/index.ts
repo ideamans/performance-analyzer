@@ -26,6 +26,8 @@ import type {
   LcpImageSize,
   LcpPhase,
   ObstructionGroup,
+  PhaseComposition,
+  WindowComposition,
   MainThreadWindow,
   NetworkWindow,
   LcpData,
@@ -55,6 +57,8 @@ export const lcpAnalyzer: Analyzer<LcpData> = {
         tbtMs: data.timeline.totalBlockingTimeMs,
         lcpRenderDelayMs: round(data.lcp.phases.find((p) => /render delay/i.test(p.phase))?.ms),
         networkVerdict: data.latency.verdict,
+        deadTimeToLcpMs: data.compositionToLcp ? round(data.compositionToLcp.deadMs) : undefined,
+        cpuRateToLcp: data.compositionToLcp ? data.compositionToLcp.cpuRate : undefined,
         lcpImagePrioritized: data.lcp.image ? String(data.lcp.image.prioritizedWell) : 'n/a',
         lcpImageBottleneck: data.lcp.image?.network?.bottleneck ?? 'n/a',
         lcpImageRank: data.crp.lcpImage
@@ -126,7 +130,101 @@ function buildLcpData(artifacts: Artifacts, derived: Derived): LcpData {
     htmlCss: buildHtmlCss(requests),
     lcp: lcpDetail,
     crp: buildCrp(artifacts, requests, lcpDetail),
+    phaseComposition: buildPhaseComposition(timeline, lcpDetail, derived),
+    compositionToLcp:
+      lcpWin !== undefined ? composeWindow(0, lcpWin, derived.topLevelTasks, requests) : undefined,
   }
+}
+
+// --- phase composition: CPU vs network-wait vs dead time --------------------
+
+/**
+ * Split each LCP phase into CPU / network-wait / dead time on the observed
+ * clock. Phase boundaries are derived from our own observed data (TTFB, the LCP
+ * image request window, LCP) so they're consistent with the tasks/requests we
+ * measure. For a non-image (text) LCP there is no Load Delay/Time.
+ */
+function buildPhaseComposition(
+  timeline: Derived['timeline'],
+  lcp: LcpDetail,
+  derived: Derived,
+): PhaseComposition[] {
+  const ttfb = timeline.timeToFirstByte
+  const lcpMs = timeline.largestContentfulPaint
+  if (ttfb === undefined || lcpMs === undefined) return []
+
+  const tasks = derived.topLevelTasks
+  const reqs = derived.requests
+  const phases: PhaseComposition[] = []
+  const add = (phase: string, lo: number, hi: number): void => {
+    if (hi - lo <= 0.5) return
+    phases.push({ phase, ...composeWindow(lo, hi, tasks, reqs) })
+  }
+
+  add('TTFB', 0, ttfb)
+  const img = lcp.image?.network
+  if (lcp.isImage && img?.requestStartMs !== undefined && img.requestEndMs !== undefined) {
+    add('Load Delay', ttfb, Math.max(ttfb, img.requestStartMs))
+    add('Load Time', img.requestStartMs, Math.max(img.requestStartMs, img.requestEndMs))
+    add('Render Delay', img.requestEndMs, Math.max(img.requestEndMs, lcpMs))
+  } else {
+    add('Render Delay', ttfb, lcpMs)
+  }
+  return phases
+}
+
+/** MECE window split (cpu > network-wait > dead), wall-clock via interval union. */
+function composeWindow(
+  lo: number,
+  hi: number,
+  tasks: Array<{ start: number; duration: number }>,
+  requests: NetworkRequest[],
+): WindowComposition {
+  const windowMs = Math.max(0, hi - lo)
+  if (windowMs <= 0) return { windowMs: 0, cpuMs: 0, networkWaitMs: 0, deadMs: 0, cpuRate: 0 }
+
+  const taskIntervals = tasks.map((t) => [t.start, t.start + t.duration] as [number, number])
+  const reqIntervals = requests.map((r) => [r.startTime, r.endTime] as [number, number])
+
+  const cpu = unionDuration(taskIntervals, lo, hi)
+  const active = unionDuration([...taskIntervals, ...reqIntervals], lo, hi)
+  const networkWait = Math.max(0, active - cpu)
+
+  // Round, then derive dead as the remainder so the parts sum to windowMs exactly.
+  const windowR = round(windowMs)!
+  const cpuR = round(cpu)!
+  const waitR = round(networkWait)!
+  const deadR = Math.max(0, windowR - cpuR - waitR)
+
+  return {
+    windowMs: windowR,
+    cpuMs: cpuR,
+    networkWaitMs: waitR,
+    deadMs: deadR,
+    cpuRate: round(cpu / windowMs, 2)!,
+  }
+}
+
+/** Total covered length of intervals clipped to [lo, hi] (merged, no overlap). */
+function unionDuration(intervals: Array<[number, number]>, lo: number, hi: number): number {
+  const clipped = intervals
+    .map(([s, e]) => [Math.max(s, lo), Math.min(e, hi)] as [number, number])
+    .filter(([s, e]) => e > s)
+    .sort((a, b) => a[0] - b[0])
+  let total = 0
+  let curStart = -1
+  let curEnd = -1
+  for (const [s, e] of clipped) {
+    if (s > curEnd) {
+      if (curEnd > curStart) total += curEnd - curStart
+      curStart = s
+      curEnd = e
+    } else if (e > curEnd) {
+      curEnd = e
+    }
+  }
+  if (curEnd > curStart) total += curEnd - curStart
+  return total
 }
 
 // --- 3.B main-thread breakdown -------------------------------------------
@@ -718,6 +816,28 @@ function buildFindings(data: LcpData): Finding[] {
         ? `LCPのRender Delayが支配的 (${renderDelay.ms}ms, LCPの${renderDelay.percent ?? '?'})。メインスレッド占有 (busy ${Math.round(busy)}ms) が主因`
         : `LCPのRender Delayが支配的 (${renderDelay.ms}ms, LCPの${renderDelay.percent ?? '?'})。メインスレッドは空いており (busy ${Math.round(busy)}ms)、レンダーブロッキング資源/ネットワーク待ちが主因`,
       evidence: { renderDelayMs: renderDelay.ms, mainThreadBusyToLcpMs: Math.round(busy) },
+    })
+  }
+
+  // Per-phase composition (CPU / network-wait / dead) — fair phase-by-phase
+  // comparison even when absolute phase durations differ between sites.
+  if (data.phaseComposition.length > 0) {
+    findings.push({
+      severity: 'info',
+      message:
+        'フェーズ別 内訳[CPU/待ち/デッド]: ' +
+        data.phaseComposition
+          .map((p) => `${p.phase} ${p.windowMs}ms(${p.cpuMs}/${p.networkWaitMs}/${p.deadMs})`)
+          .join(' / '),
+      evidence: { phaseComposition: data.phaseComposition },
+    })
+  }
+  const comp = data.compositionToLcp
+  if (comp && comp.deadMs > 200) {
+    findings.push({
+      severity: comp.deadMs > comp.windowMs * 0.3 ? 'warn' : 'info',
+      message: `LCPまでのデッドタイム ${comp.deadMs}ms (窓${comp.windowMs}ms中、CPUもネットワークも進捗せず＝タイマー/スケジューリング待ち等)`,
+      evidence: { deadMs: comp.deadMs, cpuMs: comp.cpuMs, networkWaitMs: comp.networkWaitMs },
     })
   }
 
