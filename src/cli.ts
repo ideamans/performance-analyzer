@@ -108,9 +108,16 @@ async function runAnalyze(args: ParsedArgs): Promise<void> {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
-  if (args.flags.has('help') || !args.command) {
+  // `--help`/`-h` is an explicit, successful request (exit 0). Only a bare
+  // invocation with no command at all is an error (exit 1).
+  if (args.flags.has('help')) {
     printUsage()
-    process.exitCode = args.command ? 0 : 1
+    process.exitCode = 0
+    return
+  }
+  if (!args.command) {
+    printUsage()
+    process.exitCode = 1
     return
   }
 
