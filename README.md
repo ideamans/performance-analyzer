@@ -81,6 +81,17 @@ node dist/cli.js analyze <angle> <runDir> [--format json] [--out <dir>] [--stdou
 - `--format`: 既定 `json`（カンマ区切りで複数指定可）
 - `--out`: 出力先（既定は `<runDir>`）。`--stdout` で標準出力へ
 
+### ヘルプ / LLM 向けドキュメント（英語）
+- `--help` / `-h`: 文脈別の短いヘルプ（`capture --help` / `analyze --help`）
+- `--llm`: LLM 向けの詳細ドキュメント（**出力データの見方**を含む）。サブコマンド/アングル別に出力可
+  ```bash
+  performance-analyzer --llm                    # 全体（概要＋全アングル）
+  performance-analyzer capture --llm
+  performance-analyzer analyze lcp --llm        # LCP 出力フィールドの読み方
+  performance-analyzer analyze third-party --llm
+  performance-analyzer analyze gtm --llm
+  ```
+
 ```bash
 # 例: 競合と自社をそれぞれ計測して並べて読む
 node dist/cli.js capture "https://fast-competitor.example/" --out ./runs/fast

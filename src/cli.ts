@@ -3,33 +3,35 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { analyze } from './analyze.js'
-import { analyzerNames } from './analyzers/registry.js'
 import { capture } from './capture/index.js'
 import type { Device } from './core/types.js'
+import { ANALYZE_HELP, CAPTURE_HELP, hasLlmTopic, llmHelp, SHORT_HELP } from './help.js'
 import { getReporter, reporterNames } from './report/registry.js'
 
 function printUsage(): void {
-  console.log(`performance-analyzer
+  console.log(SHORT_HELP)
+}
 
-Usage:
-  performance-analyzer capture <url> --out <dir> [options]
-  performance-analyzer analyze <angle> <runDir> [options]
+/** Context-aware short help for `--help`. */
+function printContextHelp(args: ParsedArgs): void {
+  if (args.command === 'capture') console.log(CAPTURE_HELP)
+  else if (args.command === 'analyze') console.log(ANALYZE_HELP)
+  else console.log(SHORT_HELP)
+}
 
-capture options:
-  --out <dir>        Output directory for the captured run (required)
-  --device <d>       mobile | desktop            (default: mobile)
-  --runs <n>         Number of runs; median by LCP kept (default: 3)
-  --log-level <l>    silent|error|warn|info|verbose (default: error)
-
-analyze options:
-  <angle>            ${analyzerNames().join(' | ')}
-  <runDir>           Directory of a captured run
-  --format <list>    Comma-separated: ${reporterNames().join(',')}  (default: json)
-  --out <dir>        Where to write report files (default: <runDir>)
-  --stdout           Print to stdout instead of writing files
-
-  -h, --help         Show this help
-`)
+/** Long `--llm` help, scoped to command / angle. Bare `--llm` = everything. */
+function printLlmHelp(args: ParsedArgs): void {
+  if (args.command === 'capture') {
+    console.log(llmHelp('capture'))
+  } else if (args.command === 'analyze') {
+    const angle = args.positionals[0]
+    console.log(llmHelp(angle && hasLlmTopic(angle) ? angle : 'all'))
+  } else if (args.command && hasLlmTopic(args.command)) {
+    // allow `performance-analyzer lcp --llm` as a shortcut
+    console.log(llmHelp(args.command))
+  } else {
+    console.log(llmHelp('all'))
+  }
 }
 
 interface ParsedArgs {
@@ -108,10 +110,15 @@ async function runAnalyze(args: ParsedArgs): Promise<void> {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
-  // `--help`/`-h` is an explicit, successful request (exit 0). Only a bare
-  // invocation with no command at all is an error (exit 1).
+  // `--llm` (long docs) and `--help` (short) are explicit, successful requests
+  // (exit 0) and short-circuit before any argument validation.
+  if (args.flags.has('llm')) {
+    printLlmHelp(args)
+    process.exitCode = 0
+    return
+  }
   if (args.flags.has('help')) {
-    printUsage()
+    printContextHelp(args)
     process.exitCode = 0
     return
   }
