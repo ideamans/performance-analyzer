@@ -10,9 +10,11 @@ function register(a: Analyzer): void {
   analyzers.set(a.name, a)
 }
 
-register(lcpAnalyzer)
+// Registration order is the order the angles are presented in: third-party is
+// the main theme, gtm explains where the tags come from, lcp is the bonus angle.
 register(thirdPartyAnalyzer)
 register(gtmAnalyzer)
+register(lcpAnalyzer)
 
 export function getAnalyzer(name: string): Analyzer | undefined {
   return analyzers.get(name)

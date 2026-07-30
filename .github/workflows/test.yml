@@ -36,5 +36,5 @@ jobs:
       - run: npm ci
       # Compile the standalone analyzer binary and verify it boots (the analyze
       # commands are pure JS; capture needs bun/node — see README).
-      - run: bun build --compile --outfile ./performance-analyzer src/cli.ts
-      - run: ./performance-analyzer --help
+      - run: bun build --compile --outfile ./third-party-analyzer src/cli.ts
+      - run: ./third-party-analyzer --help

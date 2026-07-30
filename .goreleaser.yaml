@@ -4,17 +4,17 @@
 # needs bun/node because Lighthouse loads runtime assets (see README).
 version: 2
 
-project_name: performance-analyzer
+project_name: third-party-analyzer
 
 before:
   hooks:
     - npm ci
 
 builds:
-  - id: performance-analyzer
+  - id: third-party-analyzer
     builder: bun
     main: ./src/cli.ts
-    binary: performance-analyzer
+    binary: third-party-analyzer
     targets:
       - bun-linux-x64
       - bun-linux-arm64
@@ -24,7 +24,7 @@ builds:
 
 archives:
   - id: default
-    ids: [performance-analyzer]
+    ids: [third-party-analyzer]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:

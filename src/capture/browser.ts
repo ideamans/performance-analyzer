@@ -39,7 +39,7 @@ async function downloadChrome(onLog?: (msg: string) => void): Promise<string | u
   const platform = detectBrowserPlatform()
   if (!platform) return undefined
 
-  const cacheDir = path.join(os.homedir(), '.cache', 'performance-analyzer', 'browsers')
+  const cacheDir = path.join(os.homedir(), '.cache', 'third-party-analyzer', 'browsers')
   const buildId = await resolveBuildId(Browser.CHROME, platform, 'stable')
 
   const cachedPath = computeExecutablePath({ browser: Browser.CHROME, platform, buildId, cacheDir })

@@ -1,4 +1,4 @@
-# performance-analyzer アーキテクチャ設計（architecture.md）
+# third-party-analyzer アーキテクチャ設計（architecture.md）
 
 > 本ドキュメントは実装の方針・設計をまとめたもの。
 > 「何を集計するか／なぜ作るか」は [idea.md](./idea.md) を参照。
@@ -33,7 +33,7 @@
 ## 2. ディレクトリ構成
 
 ```
-performance-analyzer/
+third-party-analyzer/
 ├── src/
 │   ├── capture/
 │   │   ├── runLighthouse.ts      # Lighthouse 実行 + artifacts 抽出
@@ -258,16 +258,16 @@ interface Reporter {
 
 ```
 # 1) 計測（1回。複数runの中央値を代表として保存）
-performance-analyzer capture <url> --label fast  --device mobile --runs 5
-performance-analyzer capture <url> --label slow  --device mobile --runs 5
+third-party-analyzer capture <url> --label fast  --device mobile --runs 5
+third-party-analyzer capture <url> --label slow  --device mobile --runs 5
 
 # 2) 分析（同じ artifacts に対して何度でも・複数アングル）
-performance-analyzer analyze lcp          ./runs/fast --format json,markdown
-performance-analyzer analyze third-party  ./runs/fast --format json
-performance-analyzer analyze gtm          ./runs/fast
+third-party-analyzer analyze lcp          ./runs/fast --format json,markdown
+third-party-analyzer analyze third-party  ./runs/fast --format json
+third-party-analyzer analyze gtm          ./runs/fast
 
 # 3) まとめて
-performance-analyzer analyze all ./runs/slow --format markdown
+third-party-analyzer analyze all ./runs/slow --format markdown
 ```
 
 内部処理:

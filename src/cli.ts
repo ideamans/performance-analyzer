@@ -27,7 +27,7 @@ function printLlmHelp(args: ParsedArgs): void {
     const angle = args.positionals[0]
     console.log(llmHelp(angle && hasLlmTopic(angle) ? angle : 'all'))
   } else if (args.command && hasLlmTopic(args.command)) {
-    // allow `performance-analyzer lcp --llm` as a shortcut
+    // allow `third-party-analyzer third-party --llm` as a shortcut
     console.log(llmHelp(args.command))
   } else {
     console.log(llmHelp('all'))
