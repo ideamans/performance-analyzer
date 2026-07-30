@@ -121,9 +121,21 @@ tagRequests       267         0           -267 (-100%)
 
 ## インストール
 
+**npm には未公開（試験運用中）**なので、当面は GitHub から直接インストールします。
+
 ```bash
-npm install third-party-analyzer      # ライブラリ + CLI
-npx third-party-analyzer --help       # 単発で試すだけなら
+npm install github:ideamans/third-party-analyzer     # ライブラリ + CLI
+npx github:ideamans/third-party-analyzer --help      # 単発で試すだけなら
+```
+
+`dist/` はリポジトリに含めていませんが、`prepare` スクリプトが走るので
+git インストールでも自動でビルドされます（TypeScript は devDependencies から解決）。
+
+公開後は次のようになります:
+
+```bash
+npm install third-party-analyzer
+npx third-party-analyzer --help
 ```
 
 Node.js 20+ が必要です。Chrome は自動解決されます（インストール済みを検出、
@@ -394,6 +406,14 @@ npm run test       # vitest
 ```
 
 - TypeScript（ESM, NodeNext）、Prettier 準拠（シングルクォート・セミコロンなし・120桁）
+- `npm run build` は `tsconfig.build.json`（テストを配布物から除外）、`npm run typecheck` は
+  テストも含めて型検査する
+
+---
+
+## ライセンス
+
+[MIT](./LICENSE) — Copyright (c) 2026 Kunihiko Miyanaga / ideamans inc.
 
 ---
 
