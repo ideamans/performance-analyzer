@@ -2,10 +2,11 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { ablate, type AblateResult } from './ablate.js'
 import { analyze } from './analyze.js'
 import { capture } from './capture/index.js'
 import type { Device } from './core/types.js'
-import { ANALYZE_HELP, CAPTURE_HELP, hasLlmTopic, llmHelp, SHORT_HELP } from './help.js'
+import { ABLATE_HELP, ANALYZE_HELP, CAPTURE_HELP, hasLlmTopic, llmHelp, SHORT_HELP } from './help.js'
 import { getReporter, reporterNames } from './report/registry.js'
 
 function printUsage(): void {
@@ -16,6 +17,7 @@ function printUsage(): void {
 function printContextHelp(args: ParsedArgs): void {
   if (args.command === 'capture') console.log(CAPTURE_HELP)
   else if (args.command === 'analyze') console.log(ANALYZE_HELP)
+  else if (args.command === 'ablate') console.log(ABLATE_HELP)
   else console.log(SHORT_HELP)
 }
 
@@ -23,6 +25,8 @@ function printContextHelp(args: ParsedArgs): void {
 function printLlmHelp(args: ParsedArgs): void {
   if (args.command === 'capture') {
     console.log(llmHelp('capture'))
+  } else if (args.command === 'ablate') {
+    console.log(llmHelp('ablate'))
   } else if (args.command === 'analyze') {
     const angle = args.positionals[0]
     console.log(llmHelp(angle && hasLlmTopic(angle) ? angle : 'all'))
@@ -107,6 +111,91 @@ async function runAnalyze(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runAblate(args: ParsedArgs): Promise<void> {
+  const url = args.positionals[0]
+  if (!url) {
+    console.error('Error: usage: ablate <url> --out <dir> [--device mobile] [--runs 1]')
+    process.exitCode = 1
+    return
+  }
+
+  const outDir = args.options.out
+  if (!outDir) {
+    console.error('Error: --out <dir> is required')
+    process.exitCode = 1
+    return
+  }
+
+  const device = (args.options.device ?? 'mobile') as Device
+  if (device !== 'mobile' && device !== 'desktop') {
+    console.error(`Error: --device must be 'mobile' or 'desktop'`)
+    process.exitCode = 1
+    return
+  }
+
+  const runs = args.options.runs ? Number(args.options.runs) : undefined
+  if (runs !== undefined && (!Number.isInteger(runs) || runs < 1)) {
+    console.error('Error: --runs must be a positive integer')
+    process.exitCode = 1
+    return
+  }
+
+  const resolvedOut = path.resolve(outDir)
+  console.error(`Ablating ${url} (device=${device}, runs=${runs ?? 1}/side) -> ${resolvedOut}`)
+
+  const result = await ablate(url, {
+    device,
+    runs,
+    outDir: resolvedOut,
+    logLevel: (args.options['log-level'] as never) ?? 'error',
+    onLog: (msg) => console.error(msg),
+  })
+
+  printAblation(result)
+  console.error(`Wrote ${path.join(resolvedOut, 'ablation.json')}`)
+}
+
+/** Compact side-by-side table — the whole point is to read it at a glance. */
+function printAblation(r: AblateResult): void {
+  const lines: string[] = [
+    '',
+    `Tag ablation — ${r.url}`,
+    `${r.device}, ${r.runsPerSide} run/side · blocked ${r.blocked.domains.length} tag domains ` +
+      `(${r.blocked.vendors.length} vendors)`,
+    '',
+    pad('metric', 18) + pad('baseline', 12) + pad('blocked', 12) + 'delta',
+  ]
+
+  for (const d of r.deltas) {
+    const delta =
+      d.delta === undefined
+        ? 'n/a'
+        : `${d.delta > 0 ? '+' : ''}${d.delta}` + (d.deltaPct === undefined ? '' : ` (${signed(d.deltaPct)}%)`)
+    lines.push(pad(d.metric, 18) + pad(str(d.baseline), 12) + pad(str(d.blocked), 12) + delta)
+  }
+
+  lines.push('')
+  lines.push(`vendors blocked: ${r.blocked.vendors.slice(0, 12).join(', ')}${r.blocked.vendors.length > 12 ? ', …' : ''}`)
+  if (r.leakedTagRequests > 0) {
+    lines.push(`note: ${r.leakedTagRequests} tag request(s) still got through`)
+  }
+  lines.push('Upper-bound reference value (blocked = failed requests, single run, page may break).')
+  lines.push('')
+  console.log(lines.join('\n'))
+}
+
+function pad(s: string, n: number): string {
+  return s.length >= n ? s + ' ' : s + ' '.repeat(n - s.length)
+}
+
+function str(n?: number): string {
+  return n === undefined ? 'n/a' : String(n)
+}
+
+function signed(n: number): string {
+  return `${n > 0 ? '+' : ''}${n}`
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
@@ -130,6 +219,11 @@ async function main(): Promise<void> {
 
   if (args.command === 'analyze') {
     await runAnalyze(args)
+    return
+  }
+
+  if (args.command === 'ablate') {
+    await runAblate(args)
     return
   }
 

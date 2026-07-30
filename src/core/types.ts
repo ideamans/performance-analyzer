@@ -53,6 +53,11 @@ export interface CaptureMeta {
   selectedRunIndex: number
   /** Key metrics (ms) of the selected run, for quick reference. */
   metrics: KeyMetrics
+  /**
+   * Present only for an ablation variant: the URL patterns that were blocked
+   * during the run. Its presence marks this run as NOT a normal capture.
+   */
+  blockedUrlPatterns?: string[]
 }
 
 /** Headline metrics extracted from a Lighthouse run (milliseconds). */

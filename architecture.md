@@ -66,6 +66,7 @@ third-party-analyzer/
 │   │   ├── json.ts               # JSON 出力（基本）
 │   │   └── markdown.ts           # Markdown 出力（後追加）
 │   │
+│   ├── ablate.ts                 # タグ無効化実験（capture×2 → 差分）
 │   ├── cli.ts                    # CLI エントリ
 │   └── index.ts                  # ライブラリAPI エクスポート
 │
@@ -253,8 +254,10 @@ interface Reporter {
 
 ## 6. 実行フロー / CLI
 
-`compare` は作らない。capture と analyze を分離し、サイトごとに実行して
-レポートを人が並べて読む。
+**サイト間**の自動 diff（`compare`）は作らない。capture と analyze を分離し、
+サイトごとに実行してレポートを人／LLM が並べて読む。
+一方 **同一URLの ablation 差分**（`ablate`）は機械的な因果推定なのでツール側で計算する
+（比較の主観が入らないため。この区別を守る）。
 
 ```
 # 1) 計測（1回。複数runの中央値を代表として保存）
@@ -284,7 +287,23 @@ analyze(name, runDir, opts)
   ├─ core で derived(timeline/requests/mainThread) を構築（1回）
   ├─ registry.get(name).analyze(ctx) → AnalysisResult
   └─ opts.format ごとに registry(reporter).render() → ファイル出力
+
+ablate(url, opts)                      # タグ無効化実験（--runs 既定 = 1）
+  ├─ capture(url) → <out>/baseline/    # まず素の状態
+  ├─ tagBlockTargets(baseline)         # classify で kind='tag' のホストを収集
+  │    → patterns = *://host/* と *://*.<eTLD+1>/*
+  ├─ capture(url, {blockedUrlPatterns}) → <out>/blocked/
+  │    Lighthouse settings.blockedUrlPatterns → CDP Network.setBlockedURLs
+  └─ 差分を <out>/ablation.json へ（両 run は通常の run ディレクトリなので再分析可）
 ```
+
+`ablate` の設計上の割り切り（idea.md §11 に詳細）:
+
+- 遮断は **空200ではなく失敗**（`ERR_BLOCKED_BY_CLIENT`）。忠実度より実装の軽さを取る。
+- 既定は片側1回。ノイズ床の推定やページ破壊の検出はしない（**上限の参考値**と割り切る）。
+- 遮断されたリクエストはトレース上 `statusCode: -1` の0バイト応答として残るため、
+  集計側で成功リクエストのみを数える（`failedRequests` に分離）。
+- `meta.blockedUrlPatterns` の有無でその run が ablation バリアントかを判別できる。
 
 ---
 

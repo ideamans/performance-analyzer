@@ -13,6 +13,13 @@ import type {
 
 export interface RunOptions {
   device: Device
+  /**
+   * URL glob patterns to block during the run (Lighthouse passes these to
+   * `Network.setBlockedURLs`). Blocked requests FAIL (ERR_BLOCKED_BY_CLIENT)
+   * rather than returning an empty body — good enough for an upper-bound
+   * "what if these tags were gone" experiment. See ablate.ts.
+   */
+  blockedUrlPatterns?: string[]
   /** Extra Chrome flags (e.g. for CI). Headless is added automatically. */
   chromeFlags?: string[]
   /** Lighthouse log level. Default: 'error'. */
@@ -75,6 +82,7 @@ export async function runLighthouse(url: string, opts: RunOptions): Promise<Sing
       throttlingMethod: 'devtools' as const,
       // CPU 4x but wide network — see throttling.ts for the rationale.
       throttling: { ...THROTTLING },
+      ...(opts.blockedUrlPatterns?.length ? { blockedUrlPatterns: opts.blockedUrlPatterns } : {}),
     }
 
     // Mobile is the Lighthouse default config; desktop needs the preset.

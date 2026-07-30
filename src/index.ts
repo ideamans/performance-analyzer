@@ -4,6 +4,8 @@ export type { SingleRun, RunOptions } from './capture/runLighthouse.js'
 
 export { analyze } from './analyze.js'
 export type { AnalyzeOptions } from './analyze.js'
+export { ablate, tagBlockTargets } from './ablate.js'
+export type { AblateOptions, AblateResult, AblateSide, AblateDelta } from './ablate.js'
 export { buildDerived } from './core/derived.js'
 
 export { getAnalyzer, analyzerNames } from './analyzers/registry.js'

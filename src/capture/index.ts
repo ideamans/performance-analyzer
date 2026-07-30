@@ -10,6 +10,8 @@ export interface CaptureOptions {
   runs?: number
   /** If set, the captured artifacts are written to this directory. */
   outDir?: string
+  /** URL glob patterns to block during the run (see RunOptions). */
+  blockedUrlPatterns?: string[]
   chromeFlags?: string[]
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'verbose'
   /** Called after each run completes (1-based index), for progress reporting. */
@@ -30,6 +32,7 @@ export async function capture(url: string, opts: CaptureOptions = {}): Promise<A
   for (let i = 0; i < total; i++) {
     const run = await runLighthouse(url, {
       device,
+      blockedUrlPatterns: opts.blockedUrlPatterns,
       chromeFlags: opts.chromeFlags,
       logLevel: opts.logLevel,
       onLog: opts.onLog,
@@ -50,6 +53,7 @@ export async function capture(url: string, opts: CaptureOptions = {}): Promise<A
     runs: total,
     selectedRunIndex: selected.index,
     metrics: selected.run.metrics,
+    ...(opts.blockedUrlPatterns?.length ? { blockedUrlPatterns: opts.blockedUrlPatterns } : {}),
   }
 
   const artifacts: Artifacts = {

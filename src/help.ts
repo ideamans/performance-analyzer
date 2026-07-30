@@ -17,6 +17,7 @@ USAGE
 COMMANDS
   capture <url> --out <dir>     Measure a URL and save raw artifacts
   analyze <angle> <runDir>      Analyze saved artifacts from one angle
+  ablate  <url> --out <dir>     Measure with vs without all tags, and subtract
 
 ANGLES (for analyze)
   third-party   MAIN: tag count / bytes / CPU / TBT, per vendor, vs industry avg
@@ -26,6 +27,7 @@ ANGLES (for analyze)
 TYPICAL USES
   - Benchmark an industry (e.g. 10 fashion e-commerce sites) on tag weight
   - Build a "tag diet" report for one site: what to delete, defer, or reconfigure
+  - Get the upper bound fast: \`ablate\` = "if ALL tags were gone, what changes?"
 
 GLOBAL
   -h, --help    Show help. Context-aware: \`<command> --help\`
@@ -37,6 +39,7 @@ EXAMPLES
   third-party-analyzer analyze third-party ./runs/site --stdout
   third-party-analyzer analyze gtm         ./runs/site --stdout
   third-party-analyzer analyze lcp         ./runs/site --format json --out ./reports
+  third-party-analyzer ablate  https://example.com --out ./runs/site-ablation
 
 See \`third-party-analyzer <command> --help\` for options,
 or \`third-party-analyzer <command|angle> --llm\` for full docs + data interpretation.`
@@ -62,6 +65,38 @@ NOTES
   - Chrome is auto-detected, or auto-downloaded (Chrome-for-Testing) if missing.
   - For a multi-site benchmark, capture every site with the SAME device/runs, e.g.
     one directory per site under ./runs/<site>.`
+
+export const ABLATE_HELP = `ablate — measure with tags, then again with ALL tag domains blocked, and subtract.
+
+The quick "how much is there to win at most?" experiment: two page loads, one
+number per metric. Baseline is captured first, the tag domains are taken FROM
+that baseline, then the page is re-measured with them blocked.
+
+USAGE
+  third-party-analyzer ablate <url> --out <dir> [options]
+
+OPTIONS
+  --out <dir>       Output directory (required). Writes: baseline/, blocked/
+                    (both are normal run dirs) and ablation.json
+  --device <d>      mobile | desktop                       (default: mobile)
+  --runs <n>        Runs per side; median by LCP           (default: 1)
+  --log-level <l>   silent|error|warn|info|verbose         (default: error)
+  -h, --help        Show this help        |  --llm  Full docs
+
+WHAT IS BLOCKED
+  Every domain the baseline classified as a third-party TAG (analytics, ads,
+  pixels, A/B, chat, tag managers, social, Google Fonts). Public CDN libraries
+  are NOT blocked — they are not a tag decision.
+
+READ THE RESULT AS AN UPPER BOUND
+  - Blocked requests FAIL (ERR_BLOCKED_BY_CLIENT); they are not empty 200s, so
+    tag error paths may run.
+  - One run per side by default: small deltas are within run-to-run noise.
+  - The page may visibly break (a tag may be rendering content). That is fine
+    for an upper-bound experiment — verify specifics separately.
+
+  Both run dirs are ordinary captures, so you can drill in afterwards:
+    third-party-analyzer analyze third-party <dir>/baseline --stdout`
 
 export const ANALYZE_HELP = `analyze — analyze saved artifacts from one angle.
 
@@ -109,6 +144,11 @@ Also usable for research (surveying tag practice across many sites).
 3) \`lcp\` — the bonus: if LCP is bad for reasons other than tags (slow TTFB, late
    image discovery, oversized LCP image, render-blocking first-party CSS/JS), say
    so. Prevents an over-attribution of blame to third parties.
+
+Plus one EXPERIMENT — the \`ablate\` command, not an analyze angle: measure the
+page twice (as-is, then with every tag domain blocked) and subtract. Two page
+loads for the CEILING of what a full tag diet could buy. Like capture, it drives
+Chrome, so it needs bun/node. See \`ablate --llm\`.
 
 ## Model: capture once, analyze from many angles
 1) capture: run Lighthouse ONCE per site, save raw artifacts (trace, devtoolslog,
@@ -195,6 +235,62 @@ Chrome-for-Testing is downloaded via @puppeteer/browsers and cached under
 capture needs the JS runtime + dependencies (run via bun or node). It does NOT
 work from a single compiled binary because Lighthouse loads runtime assets. The
 analyze commands DO work as a standalone binary.`
+
+const LLM_ABLATE = `# ablate — LLM guide (the counterfactual: what if ALL tags were gone?)
+
+Everything else in this tool is observational: it attributes cost to tags from a
+single page load. \`ablate\` is the one EXPERIMENTAL angle — it measures the page
+twice, the second time with every tag domain blocked, and subtracts. Use it when
+someone asks "so how much would we actually gain?" and you want a number in two
+page loads.
+
+## What it does
+1) capture baseline (default --runs 1) -> <out>/baseline/
+2) classify the baseline's requests and collect every host whose kind is \`tag\`
+   (same rules as the third-party angle: CDN libraries excluded, Google Fonts
+   included). Patterns are \`*://host/*\` plus \`*://*.<registrable-domain>/*\`.
+3) capture again with those patterns in Lighthouse's blockedUrlPatterns
+   (-> CDP Network.setBlockedURLs) -> <out>/blocked/
+4) write <out>/ablation.json and print a compact table
+
+## Output (ablation.json)
+- blocked: {domains[], vendors[], patterns[]} — exactly what was suppressed.
+- baseline / blockedSide: performanceScore (0..100), ttfbMs, fcpMs, lcpMs,
+  speedIndexMs, tbtMs, cls, interactiveMs, cpuMs (total main-thread work),
+  requests, transferKB, tagRequests, failedRequests.
+  NOTE: a blocked request still shows up in the trace as a finished 0-byte
+  request with statusCode -1. \`requests\`/\`tagRequests\` count only loaded ones;
+  the killed ones land in \`failedRequests\`. Don't read the raw request count
+  from the lhr and conclude the block failed.
+- deltas[]: {metric, unit, baseline, blocked, delta, deltaPct}. delta is
+  blocked - baseline, so NEGATIVE means faster/lighter (except performanceScore,
+  where positive is better).
+- leakedTagRequests: tag requests that still got through. 0 = the block worked.
+  Non-zero means read the result with suspicion.
+- basis: the caveat string, reproduced in every report.
+
+## How to report it — this is an UPPER BOUND, not a prediction
+State all four of these whenever you quote the numbers:
+- Blocked requests FAIL (ERR_BLOCKED_BY_CLIENT) instead of returning empty 200s,
+  so tag error/retry paths can run. The real "removed cleanly" number is usually
+  a bit better than this, occasionally worse.
+- One run per side by default: a delta of tens of ms is noise, not a finding.
+  Quote it as a range or round hard (e.g. "TBT roughly halves"), and re-run
+  --runs 3 if a number is load-bearing for a decision.
+- The page may break (an A/B or personalization tag may render the hero image),
+  which can move LCP in EITHER direction. Check that the LCP element is still
+  the same before believing an LCP delta.
+- No single tag is proven guilty: this is the ceiling for the whole tag budget.
+  Attribute per vendor with the third-party angle, or ablate again by hand with
+  a narrower set.
+
+## Where it fits
+- headline for a diet report: "removing all tags buys at most X ms TBT / Y points"
+- then \`analyze third-party\` on <out>/baseline (an ordinary run dir) to split
+  that ceiling per vendor, and \`analyze gtm\` for what to actually delete
+- then \`analyze lcp\` to see how much of LCP was never tag-related in the first
+  place. If ablate barely moves LCP but moves TBT a lot, say exactly that: the
+  diet is a responsiveness win, not an LCP win.`
 
 const LLM_THIRD_PARTY = `# analyze third-party — LLM guide (THE MAIN ANGLE: what the tags cost)
 
@@ -420,6 +516,7 @@ when Load Delay is actually large). Each has severity + message + evidence.
 const LLM_TOPICS: Record<string, string> = {
   overview: LLM_OVERVIEW,
   capture: LLM_CAPTURE,
+  ablate: LLM_ABLATE,
   'third-party': LLM_THIRD_PARTY,
   gtm: LLM_GTM,
   lcp: LLM_LCP,
@@ -428,7 +525,9 @@ const LLM_TOPICS: Record<string, string> = {
 /** Long LLM-oriented help for a topic; 'all' concatenates everything. */
 export function llmHelp(topic: string): string {
   if (topic === 'all') {
-    return [LLM_OVERVIEW, LLM_CAPTURE, LLM_THIRD_PARTY, LLM_GTM, LLM_LCP].join('\n\n' + '─'.repeat(72) + '\n\n')
+    return [LLM_OVERVIEW, LLM_CAPTURE, LLM_ABLATE, LLM_THIRD_PARTY, LLM_GTM, LLM_LCP].join(
+      '\n\n' + '─'.repeat(72) + '\n\n',
+    )
   }
   return LLM_TOPICS[topic] ?? LLM_OVERVIEW
 }

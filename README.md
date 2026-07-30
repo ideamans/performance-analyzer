@@ -5,6 +5,8 @@
 
 - タグの本数・転送量・CPU・TBT を、**ベンダー別／カテゴリ別／業界平均比**で分解する
 - タグの供給源である **GTM コンテナの構成**（何のタグが何個入っているか）を客観的に計数する
+- **全タグを遮断して測り直し、引き算する**（`ablate`）。「タグを全部やめたら最大どれだけ変わるか」を
+  2回のページロードで出す実験
 - **おまけ**として、LCP のうち「サードパーティ以外の要因」（TTFB・画像の発見遅延・
   画像サイズ・自社CSS/JSのレンダーブロック）を切り分ける
   → タグダイエットで直らない問題をタグのせいにしないため
@@ -78,6 +80,43 @@ Lighthouse でトレースを **1回だけ取得** し、その同じ成果物�
 - **LCP 画像が画像中で何番目か**、描画パスを延ばす無関係リソースの特定
   （ここにタグスクリプトが現れるのが「タグがLCPを害している」最も強い証拠）
 
+### 4) タグ無効化実験（`ablate`）— 上限値を最短で知る
+
+他の3つが「観測」（1回のロードからタグにコストを帰属させる）なのに対し、これだけが **実験**。
+ベースラインを測り、そこから検出したタグドメイン全部を遮断してもう一度測り、引き算する。
+
+```bash
+node dist/cli.js ablate "https://example.com/" --out ./runs/example-ablation
+```
+
+```
+Tag ablation — https://zozo.jp/
+mobile, 1 run/side · blocked 91 tag domains (50 vendors)
+
+metric            baseline    blocked     delta
+performanceScore  61          85          +24 (+39.3%)
+lcpMs             2639        896         -1743 (-66%)
+tbtMs             2205        580         -1625 (-73.7%)
+cpuMs             8555        1471        -7084 (-82.8%)
+requests          299         21          -278 (-93%)
+transferKB        5944        1208        -4736 (-79.7%)
+tagRequests       267         0           -267 (-100%)
+```
+
+`<out>/baseline/` と `<out>/blocked/` は**通常の run ディレクトリ**なので、そのまま
+`analyze third-party` などで掘れます。差分は `<out>/ablation.json`。
+
+**参考値（上限）として読むこと。** ここは意図的に雑な設計です:
+
+- 遮断されたリクエストは **空200ではなく失敗**（`ERR_BLOCKED_BY_CLIENT`）。タグのエラー分岐は走る
+- 既定は片側1回なので、数十ms程度の差はランごとのノイズ
+- **ページの見た目が壊れることがある**（タグがコンテンツを描いている場合）。LCP がどちらの方向にも動く
+- 個別のタグの罪を証明するものではない。タグ予算全体の**天井**を示す値
+
+> 遮断されたリクエストはトレース上「0バイトの失敗リクエスト」として残ります。`requests` は
+> 成功したものだけを数え、遮断された分は `failedRequests` に入ります（lhr の生のリクエスト数を
+> 見て「遮断が効いていない」と誤読しないため）。
+
 ---
 
 ## セットアップ
@@ -127,19 +166,34 @@ node dist/cli.js analyze <angle> <runDir> [--format json] [--out <dir>] [--stdou
 - `--out`: 出力先（既定は `<runDir>`）。`--stdout` で標準出力へ
 
 ### ヘルプ / LLM 向けドキュメント（英語）
-- `--help` / `-h`: 文脈別の短いヘルプ（`capture --help` / `analyze --help`）
+- `--help` / `-h`: 文脈別の短いヘルプ（`capture --help` / `analyze --help` / `ablate --help`）
 - `--llm`: LLM 向けの詳細ドキュメント（**出力データの見方**、および
   **ベンチマークの回し方・ダイエット提案の書き方**を含む）。サブコマンド/アングル別に出力可
   ```bash
   third-party-analyzer --llm                       # 全体（概要＋全アングル）
   third-party-analyzer capture --llm
+  third-party-analyzer ablate --llm                # 実験結果の読み方と注意
   third-party-analyzer analyze third-party --llm   # 主分析の出力フィールドの読み方
   third-party-analyzer analyze gtm --llm
   third-party-analyzer analyze lcp --llm
   ```
 
+### 3) タグ無効化実験
+
+```bash
+node dist/cli.js ablate <URL> --out <dir> [--device mobile] [--runs 1]
+```
+
+| オプション | 説明 | 既定 |
+|---|---|---|
+| `--out <dir>` | `baseline/` `blocked/` `ablation.json` の出力先（必須） | — |
+| `--device <d>` | `mobile` / `desktop` | `mobile` |
+| `--runs <n>` | **片側あたり**の実行回数 | `1` |
+| `--log-level <l>` | `silent`/`error`/`warn`/`info`/`verbose` | `error` |
+
 ```bash
 # 例A: 1サイトのタグダイエット提案
+node dist/cli.js ablate  "https://our-site.example/" --out ./runs/ours-ablation  # まず上限値
 node dist/cli.js capture "https://our-site.example/" --out ./runs/ours
 node dist/cli.js analyze third-party ./runs/ours --stdout
 node dist/cli.js analyze gtm         ./runs/ours --stdout
@@ -188,6 +242,10 @@ done
 `renderBlocking` なし）なら、**ダイエットの効果は TBT/CPU/応答性であって LCP ではない**と
 正しく書く。
 
+`ablate` を先に走らせておくと、この提案全体の**天井**（「全部やめれば最大ここまで」）を
+冒頭に置ける。ablate で LCP がほとんど動かないのに TBT が大きく動くなら、上記の結論が
+実験でも裏付けられたことになる。
+
 ---
 
 ## 計測条件（スロットリング）
@@ -228,12 +286,13 @@ FCP/LCP が一致**、窓集計（メインスレッド・ネットワーク）�
   ./dist/third-party-analyzer analyze third-party ./runs/ours --stdout
   ```
   third-party / GTM / LCP 解析は Chrome 不要で、保存済み artifacts に対しどこでも動きます。
-- **`capture` は単一バイナリでは未対応**: Lighthouse がロケール等の実行時アセットを
+- **`capture` と `ablate` は単一バイナリでは未対応**（どちらも Chrome を駆動する）:
+  Lighthouse がロケール等の実行時アセットを
   ファイルから読むため、`bun build --compile` の自己完結バイナリでは動きません
-  （その旨を明示エラーで案内）。`capture` は **`bun`/`node` で依存込み実行**してください
+  （その旨を明示エラーで案内）。**`bun`/`node` で依存込み実行**してください
   （Chrome 自動DL はそのまま機能します）。
 
-> まとめ: 解析は「単一バイナリ or Bun/Node」、計測は「Bun/Node（+自動Chrome）」。
+> まとめ: 解析は「単一バイナリ or Bun/Node」、計測・実験は「Bun/Node（+自動Chrome）」。
 
 ### CI / リリース（GitHub Actions）
 - **test**（`main`/`develop` への push・PR）: 型チェック・vitest・ビルド＋単一バイナリのコンパイルスモーク
@@ -262,6 +321,7 @@ src/
 ├── core/        # 派生モデル（trace/network/time）
 ├── analyzers/   # third-party / gtm / lcp（+ レジストリ）
 ├── report/      # json レポーター（+ レジストリ）
+├── ablate.ts    # タグ無効化実験（capture × 2 → 差分）
 ├── cli.ts
 └── index.ts     # ライブラリ API
 ```
@@ -303,8 +363,10 @@ npm run test       # vitest
 - [x] サードパーティタグ分析（`third-party`、主分析）
 - [x] GTM 詳細分析（`gtm`、コンテナを HTTP 取得しタグ設定数・種別・発火タイミングを解析）
 - [x] LCP 到達分析（`lcp`、サードパーティ以外の要因の切り分け）
+- [x] タグ無効化実験（`ablate`、全タグ遮断で上限値を測る）
 - [ ] Markdown レポーター（1サイトのダイエット提案 / 複数サイトの横並び表）
 - [ ] 複数 run ディレクトリの一括分析（ベンチマークセット向け）
+- [ ] `ablate` の粒度指定（ベンダー単位・GTM のみ・上位N累積）と空200モード
 
 > `gtm` は分析時に `googletagmanager.com` から gtm.js を実取得します
 > （取得時刻が計測時と差異が出る場合あり）。オフライン/CI では取得失敗を部分結果として扱います。
