@@ -131,6 +131,11 @@ npx github:ideamans/third-party-analyzer --help      # 単発で試すだけな�
 `dist/` はリポジトリに含めていませんが、`prepare` スクリプトが走るので
 git インストールでも自動でビルドされます（TypeScript は devDependencies から解決）。
 
+> npm 11 系は install スクリプトに `allow-scripts` の警告を出します（現状は警告のみで
+> 実行される）。スクリプト実行を禁止する設定にしている場合は `prepare` が走らず
+> `dist/` が空のまま入るので、その環境では `npm approve-scripts third-party-analyzer` で
+> 許可してください。
+
 公開後は次のようになります:
 
 ```bash
