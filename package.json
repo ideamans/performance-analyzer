@@ -4,20 +4,39 @@
   "description": "Quantify what third-party tags cost a page: volume, CPU, TBT and LCP impact, plus the GTM container behind them (with a non-third-party LCP breakdown as a bonus).",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
+  "types": "./dist/index.d.ts",
   "bin": {
     "third-party-analyzer": "./dist/cli.js"
   },
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ideamans/third-party-analyzer.git"
+  },
+  "homepage": "https://github.com/ideamans/third-party-analyzer#readme",
+  "bugs": "https://github.com/ideamans/third-party-analyzer/issues",
+  "keywords": [
+    "third-party",
+    "tag-manager",
+    "gtm",
+    "lighthouse",
+    "web-performance",
+    "lcp"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "build:binary": "bun build --compile --outfile dist/third-party-analyzer src/cli.ts",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "engines": {
     "node": ">=20"

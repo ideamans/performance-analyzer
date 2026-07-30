@@ -86,7 +86,7 @@ Lighthouse でトレースを **1回だけ取得** し、その同じ成果物�
 ベースラインを測り、そこから検出したタグドメイン全部を遮断してもう一度測り、引き算する。
 
 ```bash
-node dist/cli.js ablate "https://example.com/" --out ./runs/example-ablation
+npx third-party-analyzer ablate "https://example.com/" --out ./runs/example-ablation
 ```
 
 ```
@@ -119,14 +119,18 @@ tagRequests       267         0           -267 (-100%)
 
 ---
 
-## セットアップ
+## インストール
 
 ```bash
-npm install
-npm run build
+npm install third-party-analyzer      # ライブラリ + CLI
+npx third-party-analyzer --help       # 単発で試すだけなら
 ```
 
-Node.js 20+ / Chrome（`chrome-launcher` が Headless で起動）が必要です。
+Node.js 20+ が必要です。Chrome は自動解決されます（インストール済みを検出、
+無ければ Chrome-for-Testing を自動ダウンロード）。
+
+以降の例は `npx third-party-analyzer` と書きますが、`package.json` の `scripts` に
+入れるなら `third-party-analyzer` だけで呼べます。
 
 ---
 
@@ -135,11 +139,7 @@ Node.js 20+ / Chrome（`chrome-launcher` が Headless で起動）が必要で�
 ### 1) 計測（トレース取得）
 
 ```bash
-# ビルド済み CLI
-node dist/cli.js capture <URL> --out ./runs/<ラベル> [options]
-
-# 開発時（tsx 直実行）
-npm run dev -- capture <URL> --out ./runs/<ラベル>
+npx third-party-analyzer capture <URL> --out ./runs/<ラベル> [options]
 ```
 
 | オプション | 説明 | 既定 |
@@ -158,7 +158,7 @@ npm run dev -- capture <URL> --out ./runs/<ラベル>
 ### 2) 分析
 
 ```bash
-node dist/cli.js analyze <angle> <runDir> [--format json] [--out <dir>] [--stdout]
+npx third-party-analyzer analyze <angle> <runDir> [--format json] [--out <dir>] [--stdout]
 ```
 
 - `<angle>`: `third-party`（主）/ `gtm` / `lcp`（おまけ）
@@ -181,7 +181,7 @@ node dist/cli.js analyze <angle> <runDir> [--format json] [--out <dir>] [--stdou
 ### 3) タグ無効化実験
 
 ```bash
-node dist/cli.js ablate <URL> --out <dir> [--device mobile] [--runs 1]
+npx third-party-analyzer ablate <URL> --out <dir> [--device mobile] [--runs 1]
 ```
 
 | オプション | 説明 | 既定 |
@@ -193,17 +193,17 @@ node dist/cli.js ablate <URL> --out <dir> [--device mobile] [--runs 1]
 
 ```bash
 # 例A: 1サイトのタグダイエット提案
-node dist/cli.js ablate  "https://our-site.example/" --out ./runs/ours-ablation  # まず上限値
-node dist/cli.js capture "https://our-site.example/" --out ./runs/ours
-node dist/cli.js analyze third-party ./runs/ours --stdout
-node dist/cli.js analyze gtm         ./runs/ours --stdout
-node dist/cli.js analyze lcp         ./runs/ours --stdout   # タグで直らない分の切り分け
+npx third-party-analyzer ablate  "https://our-site.example/" --out ./runs/ours-ablation  # まず上限値
+npx third-party-analyzer capture "https://our-site.example/" --out ./runs/ours
+npx third-party-analyzer analyze third-party ./runs/ours --stdout
+npx third-party-analyzer analyze gtm         ./runs/ours --stdout
+npx third-party-analyzer analyze lcp         ./runs/ours --stdout   # タグで直らない分の切り分け
 
 # 例B: 業種内ベンチマーク（例: ファッション通販10サイト）
 for s in a b c d e f g h i j; do
-  node dist/cli.js capture "https://$s.example/" --out ./runs/$s
-  node dist/cli.js analyze third-party ./runs/$s --out ./reports/$s
-  node dist/cli.js analyze gtm         ./runs/$s --out ./reports/$s
+  npx third-party-analyzer capture "https://$s.example/" --out ./runs/$s
+  npx third-party-analyzer analyze third-party ./runs/$s --out ./reports/$s
+  npx third-party-analyzer analyze gtm         ./runs/$s --out ./reports/$s
 done
 ```
 
@@ -267,7 +267,47 @@ FCP/LCP が一致**、窓集計（メインスレッド・ネットワーク）�
 
 ---
 
+## ライブラリとして使う
+
+CLI と同じ機能を npm モジュールとして呼べます（型定義同梱、ESM のみ）。
+複数サイトのバッチ計測や、結果を自前の集計に流し込む用途はこちら。
+
+```ts
+import { capture, analyze, ablate } from 'third-party-analyzer'
+
+// 1) 計測 → run ディレクトリに保存
+await capture('https://example.com/', { device: 'mobile', runs: 3, outDir: './runs/site' })
+
+// 2) 同じ artifacts を何度でも分析（純粋。gtm のみ HTTP 取得あり）
+const tp = await analyze('third-party', './runs/site')
+console.log(tp.summary.tagVendors, tp.summary.tpJsCpuShare)
+
+// 3) 全タグ遮断で上限値を測る（内部で capture を2回）
+const result = await ablate('https://example.com/', { outDir: './runs/site-ablation' })
+console.log(result.deltas.find((d) => d.metric === 'tbtMs'))
+```
+
+主なエクスポート:
+
+| 名前 | 用途 |
+|---|---|
+| `capture(url, opts)` | Lighthouse 計測 → `Artifacts`（`outDir` 指定で保存） |
+| `analyze(name, runDir, opts)` | `third-party` / `gtm` / `lcp` を実行 → `AnalysisResult` |
+| `ablate(url, opts)` | タグ無効化実験 → `AblateResult` |
+| `tagBlockTargets(artifacts)` | 遮断対象のタグホスト／パターンだけ取り出す |
+| `loadArtifacts` / `saveArtifacts` | run ディレクトリの読み書き |
+| `buildDerived(artifacts)` | 派生モデル（timeline / requests / mainThread …） |
+| `getAnalyzer` / `analyzerNames` / `getReporter` | 独自アナライザ・レポーターの登録・解決 |
+
+`capture` と `ablate` は Chrome を起動するため Node.js 実行環境が必要です
+（`analyze` 系は保存済み artifacts さえあれば動きます）。
+
+---
+
 ## 配布 / 単独CLI（Bun）と Chrome 自動取得
+
+配布の主軸は **npm パッケージ**（`npm install third-party-analyzer`）です。
+以下は「Node の依存を持ち込めない環境で解析だけ回したい」場合の補助手段。
 
 ### Chrome の自動取得
 `capture` 実行時、Chrome を次の順で解決します（どの環境でも動くように）:
