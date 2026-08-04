@@ -44,6 +44,11 @@ export interface CaptureMeta {
     method?: string
     [key: string]: unknown
   }
+  /**
+   * User agent emulated during capture. Recorded because sites can serve
+   * different pages per UA, so a dataset is only comparable if this matches.
+   */
+  userAgent?: string
   /** ISO timestamp of when this run was captured. */
   capturedAt: string
   lighthouseVersion: string
