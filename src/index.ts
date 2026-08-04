@@ -1,6 +1,7 @@
 export { capture, runLighthouse, selectMedianRun, loadArtifacts, saveArtifacts } from './capture/index.js'
 export type { CaptureOptions } from './capture/index.js'
 export type { SingleRun, RunOptions } from './capture/runLighthouse.js'
+export { IPHONE_USER_AGENT, MAC_SAFARI_USER_AGENT } from './capture/userAgent.js'
 
 export { analyze } from './analyze.js'
 export type { AnalyzeOptions } from './analyze.js'

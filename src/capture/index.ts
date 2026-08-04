@@ -3,7 +3,6 @@ import { selectMedianRun } from './medianRun.js'
 import { runLighthouse, type SingleRun } from './runLighthouse.js'
 import { saveArtifacts } from './store.js'
 import { THROTTLING, THROTTLING_DESCRIPTION } from './throttling.js'
-import { defaultUserAgent } from './userAgent.js'
 
 export interface CaptureOptions {
   device?: Device
@@ -15,11 +14,10 @@ export interface CaptureOptions {
   blockedUrlPatterns?: string[]
   chromeFlags?: string[]
   /**
-   * User agent to emulate. Defaults to a real-handset string rather than
-   * Lighthouse's Moto G default, which bot protection blocks (see userAgent.ts).
-   * Pass `false` to keep Lighthouse's own default.
+   * User agent to emulate. Defaults to Lighthouse's own (Moto G on mobile).
+   * Pass an alternative from userAgent.ts for sites that block it.
    */
-  userAgent?: string | false
+  userAgent?: string
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'verbose'
   /** Called after each run completes (1-based index), for progress reporting. */
   onRun?: (index: number, total: number, run: SingleRun) => void
@@ -56,7 +54,7 @@ export async function capture(url: string, opts: CaptureOptions = {}): Promise<A
     finalUrl: selected.run.finalUrl,
     device,
     throttling: { method: 'devtools', description: THROTTLING_DESCRIPTION, ...THROTTLING },
-    ...(opts.userAgent === false ? {} : { userAgent: opts.userAgent ?? defaultUserAgent(device) }),
+    ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
     capturedAt: new Date().toISOString(),
     lighthouseVersion: selected.run.lighthouseVersion,
     runs: total,

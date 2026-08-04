@@ -2,7 +2,6 @@ import * as chromeLauncher from 'chrome-launcher'
 
 import { resolveChromePath } from './browser.js'
 import { THROTTLING } from './throttling.js'
-import { defaultUserAgent } from './userAgent.js'
 
 import type {
   Device,
@@ -26,11 +25,11 @@ export interface RunOptions {
   /** Lighthouse log level. Default: 'error'. */
   logLevel?: 'silent' | 'error' | 'warn' | 'info' | 'verbose'
   /**
-   * User agent to emulate. Defaults to a real-handset string (see userAgent.ts)
-   * rather than Lighthouse's Moto G default, which bot protection blocks.
-   * Pass `false` to keep Lighthouse's own default.
+   * User agent to emulate. Defaults to Lighthouse's own (Moto G on mobile).
+   * Some sites block that string as an automated-auditing signature; pass an
+   * alternative from userAgent.ts for those. See that file for the caveats.
    */
-  userAgent?: string | false
+  userAgent?: string
   /** Progress messages (e.g. Chrome download). */
   onLog?: (msg: string) => void
 }
@@ -89,10 +88,9 @@ export async function runLighthouse(url: string, opts: RunOptions): Promise<Sing
       throttlingMethod: 'devtools' as const,
       // CPU 4x but wide network — see throttling.ts for the rationale.
       throttling: { ...THROTTLING },
-      // Lighthouse's mobile default UA is the PageSpeed Insights signature and
-      // gets 403'd by bot protection, which loses the site entirely. Emulate a
-      // real handset unless the caller opts out. See userAgent.ts.
-      ...(opts.userAgent === false ? {} : { emulatedUserAgent: opts.userAgent ?? defaultUserAgent(opts.device) }),
+      // Only override when asked. Lighthouse's default is the comparable
+      // baseline; alternatives exist for sites that block it (see userAgent.ts).
+      ...(opts.userAgent ? { emulatedUserAgent: opts.userAgent } : {}),
       ...(opts.blockedUrlPatterns?.length ? { blockedUrlPatterns: opts.blockedUrlPatterns } : {}),
     }
 
